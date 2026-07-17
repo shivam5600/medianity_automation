@@ -3,7 +3,7 @@
 
 import { hashPassword } from './auth.js';
 import { createComplaintCase, createAppointmentCase, createSupportCase, setStatus, recordRating } from '../services/cases.js';
-import { holdSlot } from '../services/booking.js';
+import { holdSlot, confirmBooking, markVisited } from '../services/booking.js';
 
 // Pilot logins (documented in README). Change SESSION_SECRET + these before real use.
 export async function seedAdminUsers(store) {
@@ -34,11 +34,31 @@ export async function seedDemo(store) {
   await setStatus(store, c3.id, 'resolved');
   await recordRating(store, c3.id, 4);
 
+  // appointment -> confirmed (funnel: booked)
   const p4 = await P('+919990000004', 'Neha Verma');
-  const doctor = await store.getDoctor('doc_ortho_1');
-  const cA = await createAppointmentCase(store, { patient: p4, doctor });
+  const drO = await store.getDoctor('doc_ortho_1');
+  const cA = await createAppointmentCase(store, { patient: p4, doctor: drO });
   const b = await holdSlot(store, { slotId: 'slot_1', patient: p4, caseId: cA.id });
+  await store.updateBooking(b.id, { caseId: cA.id });
   await store.updateCase(cA.id, { bookingId: b.id });
+  await confirmBooking(store, b.id);
+
+  // appointment -> confirmed -> visited (funnel: visited)
+  const p6 = await P('+919990000006', 'Kiran Rao');
+  const drG = await store.getDoctor('doc_gyn_1');
+  const cB = await createAppointmentCase(store, { patient: p6, doctor: drG });
+  const b2 = await holdSlot(store, { slotId: 'slot_3', patient: p6, caseId: cB.id });
+  await store.updateBooking(b2.id, { caseId: cB.id });
+  await store.updateCase(cB.id, { bookingId: b2.id });
+  await confirmBooking(store, b2.id);
+  await markVisited(store, b2.id);
+
+  // a still-pending hold (kept from expiry) so the "pending bookings" alert + actions show
+  const p7 = await P('+919990000007', 'Asha Gupta');
+  const cC = await createAppointmentCase(store, { patient: p7, doctor: drO });
+  const b3 = await holdSlot(store, { slotId: 'slot_2', patient: p7, caseId: cC.id });
+  await store.updateBooking(b3.id, { caseId: cC.id, holdExpiresAt: Date.now() + 30 * 86400000 });
+  await store.updateCase(cC.id, { bookingId: b3.id });
 
   const p5 = await P('+919990000005', 'Vikas Yadav');
   await createSupportCase(store, { patient: p5, message: 'Need help with the discharge process' });
