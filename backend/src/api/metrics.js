@@ -2,9 +2,8 @@
 
 import { isOpen, isSlaBreached } from '../services/cases.js';
 
-export function computeMetrics(store) {
-  const cases = store.listCases();
-  const bookings = store.listBookings();
+export async function computeMetrics(store) {
+  const [cases, bookings, teams] = await Promise.all([store.listCases(), store.listBookings(), store.listTeams()]);
 
   const complaints = cases.filter((c) => c.type === 'complaint');
   const leads = cases.filter((c) => c.type === 'enquiry');
@@ -22,7 +21,7 @@ export function computeMetrics(store) {
     ? Math.round(resTimes.reduce((a, b) => a + b, 0) / resTimes.length / 60000)
     : null;
 
-  const byTeam = store.listTeams().map((t) => {
+  const byTeam = teams.map((t) => {
     const tc = cases.filter((c) => c.teamId === t.id);
     return {
       team: t.name,

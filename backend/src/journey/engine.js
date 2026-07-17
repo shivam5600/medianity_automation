@@ -1,4 +1,4 @@
-// Journey engine — a persisted per-user state machine over WhatsApp.
+// Journey engine — a persisted per-user state machine over WhatsApp. (async: all store I/O awaited)
 //
 // Root flow: language -> (confirm/capture name) -> menu -> hand off to a journey.
 // Mobile is captured automatically (it IS the WhatsApp number). Name is captured once (confirm the
@@ -8,14 +8,13 @@
 //   * restart  — "restart"/"menu"/"मेनू" or a Restart button resets to the menu anytime.
 //   * support  — "help"/"support" or the "Talk to our team" menu option hands off to a human:
 //                creates a Front-Desk support case, shares the contact number, alerts staff
-//                (staff_alert event), and PAUSES the bot ('with_agent') so an admin can reply.
-//                Live two-way admin replies from the portal are the next leg; every inbound is
-//                already logged (store.messages) as that inbox's foundation.
+//                (staff_alert event), and PAUSES the bot ('with_agent') so an admin can reply from
+//                the portal (two-way inbox). Every inbound is logged (store.messages).
 //   * resume   — a returning user mid-journey is offered "Resume / Start over".
 //   * expiry   — after SESSION_TTL_MS the session is dropped and the user starts fresh.
 //
 // Inbound (normalised by the transport layer): { waPhone, kind:'text'|'interactive'|'image',
-//   text?, replyId?, media?, profileName?, now? }. handle() returns { session, replies }.
+//   text?, replyId?, media?, profileName?, now? }. handle() resolves to { session, replies }.
 
 import { t, hasKey } from '../i18n.js';
 import { JOURNEYS } from './index.js';
@@ -51,10 +50,8 @@ const isValidName = (s) => {
   return n.length >= 2 && !/\d/.test(n);
 };
 
-export function newSession(store, waPhone, now) {
-  const patient = store.getPatient(waPhone);
-  // A returning patient whose language we already know skips straight to the menu (afterLanguage
-  // still re-checks that we have their name).
+export async function newSession(store, waPhone, now) {
+  const patient = await store.getPatient(waPhone);
   const step = patient?.lang ? 'menu' : 'language';
   return session(waPhone, 'root', step, patient?.lang ?? null, now);
 }
@@ -63,50 +60,46 @@ function session(waPhone, journey, step, lang, now) {
   return { waPhone, journey, step, lang, state: {}, lastActivityAt: now, expiresAt: now + SESSION_TTL_MS };
 }
 
-export function handle(deps, inbound) {
+export async function handle(deps, inbound) {
   const { store } = deps;
   const now = inbound.now ?? Date.now();
   const waPhone = inbound.waPhone;
 
-  store.addMessage({
+  await store.addMessage({
     waPhone,
     direction: 'in',
     body: inbound.text ?? `[${inbound.kind}]`,
     replyId: inbound.replyId ?? null,
   });
 
-  let sess = store.getSession(waPhone);
+  let sess = await store.getSession(waPhone);
   const expired = sess && sess.expiresAt && now > sess.expiresAt;
 
-  // New or expired session: prompt the first step, do NOT consume this message as input.
   if (!sess || expired) {
-    sess = newSession(store, waPhone, now);
+    sess = await newSession(store, waPhone, now);
     const ctx = makeCtx(deps, sess, inbound, now);
-    if (sess.step === 'menu') afterLanguage(ctx);
+    if (sess.step === 'menu') await afterLanguage(ctx);
     else promptLanguage(ctx);
     return finish(deps, ctx);
   }
 
   const ctx = makeCtx(deps, sess, inbound, now);
 
-  // Global restart.
   if (isRestart(inbound)) {
     const fresh = session(waPhone, 'root', sess.lang ? 'menu' : 'language', sess.lang, now);
     fresh.state._profileName = sess.state._profileName;
     ctx.session = fresh;
     ctx.say('restarted');
-    if (fresh.step === 'menu') afterLanguage(ctx);
+    if (fresh.step === 'menu') await afterLanguage(ctx);
     else promptLanguage(ctx);
     return finish(deps, ctx);
   }
 
-  // Global support handoff (once past name/language capture).
   if (isSupport(inbound) && sess.lang && sess.step !== 'with_agent') {
-    startSupport(ctx);
+    await startSupport(ctx);
     return finish(deps, ctx);
   }
 
-  // Resume offer: a greeting arriving mid-journey.
   if (isGreeting(inbound) && sess.journey !== 'root') {
     sess.state._resume = { journey: sess.journey, step: sess.step };
     sess.journey = 'root';
@@ -116,17 +109,17 @@ export function handle(deps, inbound) {
   }
 
   if (sess.journey === 'root') {
-    handleRoot(ctx);
+    await handleRoot(ctx);
   } else {
     ctx.journey = JOURNEYS[sess.journey];
-    ctx.journey.steps[sess.step].handle(ctx);
+    await ctx.journey.steps[sess.step].handle(ctx);
   }
   return finish(deps, ctx);
 }
 
 // ---- root step handling ----
 
-function handleRoot(ctx) {
+async function handleRoot(ctx) {
   const s = ctx.session;
 
   if (s.step === 'language') {
@@ -136,7 +129,7 @@ function handleRoot(ctx) {
       return promptLanguage(ctx);
     }
     s.lang = opt.id === 'lang_hi' ? 'hi' : 'en';
-    ctx.store.upsertPatient({ waPhone: s.waPhone, lang: s.lang });
+    await ctx.store.upsertPatient({ waPhone: s.waPhone, lang: s.lang });
     ctx.say('language_set');
     return afterLanguage(ctx);
   }
@@ -148,7 +141,7 @@ function handleRoot(ctx) {
       return promptNameConfirm(ctx);
     }
     if (opt.id === 'name_yes') {
-      saveName(ctx, s.state._pendingName);
+      await saveName(ctx, s.state._pendingName);
       return promptMenu(ctx);
     }
     return promptNameEntry(ctx);
@@ -160,7 +153,7 @@ function handleRoot(ctx) {
       ctx.say('name_invalid');
       return promptNameEntry(ctx);
     }
-    saveName(ctx, text);
+    await saveName(ctx, text);
     return promptMenu(ctx);
   }
 
@@ -202,35 +195,33 @@ function handleRoot(ctx) {
   }
 }
 
-// Decide what comes after language is known: capture the name if we don't have it, else the menu.
-function afterLanguage(ctx) {
-  const patient = ctx.store.getPatient(ctx.session.waPhone);
+async function afterLanguage(ctx) {
+  const patient = await ctx.store.getPatient(ctx.session.waPhone);
   if (patient?.name) return promptMenu(ctx);
   const profileName = ctx.session.state._profileName;
-  // Only offer to confirm the WhatsApp profile name if it is itself a valid (digit-free) name.
   if (profileName && isValidName(profileName)) return promptNameConfirm(ctx, profileName);
   return promptNameEntry(ctx);
 }
 
-function startJourney(ctx, name) {
+async function startJourney(ctx, name) {
   const s = ctx.session;
   s.journey = name;
   ctx.journey = JOURNEYS[name];
   s.step = ctx.journey.firstStep;
-  ctx.journey.steps[s.step].prompt(ctx);
+  await ctx.journey.steps[s.step].prompt(ctx);
 }
 
-function startSupport(ctx) {
+async function startSupport(ctx) {
   const s = ctx.session;
-  const patient = ctx.store.upsertPatient({ waPhone: s.waPhone, lang: s.lang });
-  const c = createSupportCase(ctx.store, { patient, message: ctx.inbound.text || '' });
+  const patient = await ctx.store.upsertPatient({ waPhone: s.waPhone, lang: s.lang });
+  const c = await createSupportCase(ctx.store, { patient, message: ctx.inbound.text || '' });
   ctx.say('support_created', { vars: { no: c.humanNo, phone: SUPPORT_PHONE } });
   s.journey = 'root';
   s.step = 'with_agent';
 }
 
-function saveName(ctx, name) {
-  ctx.store.upsertPatient({ waPhone: ctx.session.waPhone, name, lang: ctx.session.lang });
+async function saveName(ctx, name) {
+  await ctx.store.upsertPatient({ waPhone: ctx.session.waPhone, name, lang: ctx.session.lang });
 }
 
 function promptLanguage(ctx) {
@@ -289,19 +280,19 @@ function makeCtx(deps, sess, inbound, now) {
   return ctx;
 }
 
-function finish(deps, ctx) {
+async function finish(deps, ctx) {
   const { store, adapter } = deps;
   const waPhone = ctx.session.waPhone;
   for (const r of ctx.replies) {
-    adapter.send(waPhone, r);
-    store.addMessage({ waPhone, direction: 'out', body: r.body });
+    await adapter.send(waPhone, r);
+    await store.addMessage({ waPhone, direction: 'out', body: r.body });
   }
   if (ctx._end) {
-    store.deleteSession(waPhone);
+    await store.deleteSession(waPhone);
   } else {
     ctx.session.lastActivityAt = ctx.now;
     ctx.session.expiresAt = ctx.now + SESSION_TTL_MS;
-    store.saveSession(ctx.session);
+    await store.saveSession(ctx.session);
   }
   return { session: ctx.session, replies: ctx.replies };
 }

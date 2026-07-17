@@ -22,161 +22,159 @@ const btn = (id) => ({ kind: 'interactive', replyId: id });
 const txt = (text) => ({ kind: 'text', text });
 
 // Common intro: greeting (with a WhatsApp profile name) -> language -> confirm name -> at the menu.
-function toMenu(send, p, { profileName = 'Ravi Kumar', lang = 'lang_en' } = {}) {
-  send(p, { ...txt('hi'), profileName });
-  send(p, btn(lang));
-  send(p, btn('name_yes'));
+async function toMenu(send, p, { profileName = 'Ravi Kumar', lang = 'lang_en' } = {}) {
+  await send(p, { ...txt('hi'), profileName });
+  await send(p, btn(lang));
+  await send(p, btn('name_yes'));
 }
 
-test('name is captured up front by confirming the WhatsApp profile name', () => {
+test('name is captured up front by confirming the WhatsApp profile name', async () => {
   const { store, send } = setup();
   const p = '+9101';
-  assert.match(last(send(p, { ...txt('hi'), profileName: 'Ravi Kumar' })), /Welcome to Medinity/);
-  assert.match(last(send(p, btn('lang_en'))), /name as Ravi Kumar/);
-  assert.match(last(send(p, btn('name_yes'))), /help you today/);
-  assert.equal(store.getPatient(p).name, 'Ravi Kumar');
-  assert.equal(store.getPatient(p).waPhone, p); // mobile captured automatically
+  assert.match(last(await send(p, { ...txt('hi'), profileName: 'Ravi Kumar' })), /Welcome to Medinity/);
+  assert.match(last(await send(p, btn('lang_en'))), /name as Ravi Kumar/);
+  assert.match(last(await send(p, btn('name_yes'))), /help you today/);
+  assert.equal((await store.getPatient(p)).name, 'Ravi Kumar');
+  assert.equal((await store.getPatient(p)).waPhone, p);
 });
 
-test('name entry rejects a value containing digits, accepts a clean name', () => {
+test('name entry rejects a value containing digits, accepts a clean name', async () => {
   const { store, send } = setup();
   const p = '+9102';
-  send(p, txt('hi')); // no profile name -> ask to type it
-  assert.match(last(send(p, btn('lang_en'))), /type your full name/);
-  assert.match(bodies(send(p, txt('R2D2'))), /valid name/); // rejected (has digits), re-asked
-  assert.match(last(send(p, txt('Aman Verma'))), /help you today/);
-  assert.equal(store.getPatient(p).name, 'Aman Verma');
+  await send(p, txt('hi'));
+  assert.match(last(await send(p, btn('lang_en'))), /type your full name/);
+  assert.match(bodies(await send(p, txt('R2D2'))), /valid name/);
+  assert.match(last(await send(p, txt('Aman Verma'))), /help you today/);
+  assert.equal((await store.getPatient(p)).name, 'Aman Verma');
 });
 
-test('a WhatsApp profile name with digits is not offered for confirm; we ask to type one', () => {
+test('a WhatsApp profile name with digits is not offered for confirm; we ask to type one', async () => {
   const { send } = setup();
   const p = '+9103';
-  send(p, { ...txt('hi'), profileName: 'Bed 12' });
-  assert.match(last(send(p, btn('lang_en'))), /type your full name/);
+  await send(p, { ...txt('hi'), profileName: 'Bed 12' });
+  assert.match(last(await send(p, btn('lang_en'))), /type your full name/);
 });
 
-test('complaint journey: menu -> category -> room -> desc -> photo -> routed ticket', () => {
+test('complaint journey: menu -> category -> room -> desc -> photo -> routed ticket', async () => {
   const { store, send } = setup();
   const p = '+9111';
-  toMenu(send, p);
-  assert.match(last(send(p, btn('menu_complaint'))), /problem about/);
-  assert.match(last(send(p, btn('cat_cleanliness'))), /room or bed/);
-  assert.match(last(send(p, txt('204'))), /describe the problem/);
-  assert.match(last(send(p, txt('Bed is dirty'))), /Send a photo/);
+  await toMenu(send, p);
+  assert.match(last(await send(p, btn('menu_complaint'))), /problem about/);
+  assert.match(last(await send(p, btn('cat_cleanliness'))), /room or bed/);
+  assert.match(last(await send(p, txt('204'))), /describe the problem/);
+  assert.match(last(await send(p, txt('Bed is dirty'))), /Send a photo/);
 
-  const done = send(p, txt('skip'));
+  const done = await send(p, txt('skip'));
   assert.match(last(done), /Housekeeping/);
   assert.match(last(done), /30/);
 
-  const c = store.listCases()[0];
+  const c = (await store.listCases())[0];
   assert.equal(c.type, 'complaint');
   assert.equal(c.teamId, 'housekeeping');
   assert.equal(c.roomBed, '204');
   assert.equal(c.etaMin, 30);
-  assert.equal(store.getPatient(p).name, 'Ravi Kumar'); // name flowed in, never re-asked
-  assert.equal(store.getSession(p), null);
+  assert.equal((await store.getPatient(p)).name, 'Ravi Kumar');
+  assert.equal(await store.getSession(p), null);
 });
 
-test('language chosen up front carries through the whole journey (Hindi)', () => {
+test('language chosen up front carries through the whole journey (Hindi)', async () => {
   const { send } = setup();
   const p = '+9122';
-  send(p, { ...txt('hi'), profileName: 'Sunita' });
-  assert.match(last(send(p, btn('lang_hi'))), /Sunita/); // name confirm in Hindi
-  assert.match(last(send(p, btn('name_yes'))), /मदद/); // menu in Hindi
-  assert.match(last(send(p, btn('menu_complaint'))), /समस्या/); // category in Hindi
+  await send(p, { ...txt('hi'), profileName: 'Sunita' });
+  assert.match(last(await send(p, btn('lang_hi'))), /Sunita/);
+  assert.match(last(await send(p, btn('name_yes'))), /मदद/);
+  assert.match(last(await send(p, btn('menu_complaint'))), /समस्या/);
 });
 
-test('restart resets to the menu from anywhere', () => {
+test('restart resets to the menu from anywhere', async () => {
   const { store, send } = setup();
   const p = '+9133';
-  toMenu(send, p);
-  send(p, btn('menu_complaint'));
-  send(p, btn('cat_food')); // mid-journey
+  await toMenu(send, p);
+  await send(p, btn('menu_complaint'));
+  await send(p, btn('cat_food'));
 
-  assert.match(last(send(p, txt('restart'))), /help you today/);
-  const s = store.getSession(p);
+  assert.match(last(await send(p, txt('restart'))), /help you today/);
+  const s = await store.getSession(p);
   assert.equal(s.step, 'menu');
   assert.equal(s.state.categoryId, undefined);
 });
 
-test('resume: a greeting mid-journey offers Resume / Start over', () => {
+test('resume: a greeting mid-journey offers Resume / Start over', async () => {
   const { send } = setup();
   const p = '+9144';
-  toMenu(send, p);
-  send(p, btn('menu_complaint'));
-  send(p, btn('cat_cleanliness')); // at "room"
+  await toMenu(send, p);
+  await send(p, btn('menu_complaint'));
+  await send(p, btn('cat_cleanliness'));
 
-  assert.match(last(send(p, txt('hi'))), /unfinished|Resume/i);
-  assert.match(last(send(p, btn('resume_continue'))), /room or bed/);
+  assert.match(last(await send(p, txt('hi'))), /unfinished|Resume/i);
+  assert.match(last(await send(p, btn('resume_continue'))), /room or bed/);
 });
 
-test('resume: choosing Start over goes back to the menu', () => {
+test('resume: choosing Start over goes back to the menu', async () => {
   const { send } = setup();
   const p = '+9155';
-  toMenu(send, p);
-  send(p, btn('menu_complaint'));
-  send(p, btn('cat_cleanliness'));
-  send(p, txt('hi'));
-  assert.match(last(send(p, btn('resume_restart'))), /help you today/);
+  await toMenu(send, p);
+  await send(p, btn('menu_complaint'));
+  await send(p, btn('cat_cleanliness'));
+  await send(p, txt('hi'));
+  assert.match(last(await send(p, btn('resume_restart'))), /help you today/);
 });
 
-test('an expired session starts fresh (returning patient keeps language + name)', () => {
+test('an expired session starts fresh (returning patient keeps language + name)', async () => {
   const { store, send } = setup();
   const p = '+9166';
-  toMenu(send, p);
-  send(p, btn('menu_complaint'));
-  send(p, btn('cat_cleanliness')); // mid-journey
+  await toMenu(send, p);
+  await send(p, btn('menu_complaint'));
+  await send(p, btn('cat_cleanliness'));
 
-  const r = send(p, txt('anything'), NOW + DAY + 1);
-  assert.match(last(r), /help you today/); // straight to menu, no language/name re-ask
-  assert.equal(store.getSession(p).step, 'menu');
+  const r = await send(p, txt('anything'), NOW + DAY + 1);
+  assert.match(last(r), /help you today/);
+  assert.equal((await store.getSession(p)).step, 'menu');
 });
 
-test('appointment journey: department -> doctor -> slot -> held booking (name not re-asked)', () => {
+test('appointment journey: department -> doctor -> slot -> held booking (name not re-asked)', async () => {
   const { store, send } = setup();
   const p = '+9177';
-  toMenu(send, p);
-  assert.match(last(send(p, btn('menu_appointment'))), /department/);
-  assert.match(last(send(p, txt('1'))), /doctor/); // Orthopaedics
-  assert.match(last(send(p, txt('1'))), /time slot/); // Dr. A. Sharma
-  assert.match(last(send(p, txt('1'))), /pending/); // books straight after slot
+  await toMenu(send, p);
+  assert.match(last(await send(p, btn('menu_appointment'))), /department/);
+  assert.match(last(await send(p, txt('1'))), /doctor/);
+  assert.match(last(await send(p, txt('1'))), /time slot/);
+  assert.match(last(await send(p, txt('1'))), /pending/);
 
-  const bookings = store.listBookings();
+  const bookings = await store.listBookings();
   assert.equal(bookings.length, 1);
   assert.equal(bookings[0].status, 'held');
-  assert.equal(store.getSlot('slot_1').status, 'full');
-  const c = store.listCases().find((x) => x.type === 'enquiry');
+  assert.equal((await store.getSlot('slot_1')).status, 'full');
+  const c = (await store.listCases()).find((x) => x.type === 'enquiry');
   assert.ok(c && c.bookingId);
 });
 
-test('support handoff (menu): creates a support case, shares contact, alerts staff, pauses bot', () => {
+test('support handoff (menu): creates a support case, shares contact, alerts staff, pauses bot', async () => {
   const { store, send } = setup();
   const p = '+9188';
-  toMenu(send, p);
+  await toMenu(send, p);
 
-  const r = send(p, btn('menu_support'));
+  const r = await send(p, btn('menu_support'));
   assert.match(last(r), /support team/i);
-  assert.match(last(r), /94540/); // contact number surfaced
+  assert.match(last(r), /94540/);
 
-  const c = store.listCases().find((x) => x.type === 'support');
+  const c = (await store.listCases()).find((x) => x.type === 'support');
   assert.ok(c);
-  assert.equal(store.getSession(p).step, 'with_agent');
-  assert.equal(store.listCaseEvents(c.id).filter((e) => e.type === 'staff_alert').length, 1);
+  assert.equal((await store.getSession(p)).step, 'with_agent');
+  assert.equal((await store.listCaseEvents(c.id)).filter((e) => e.type === 'staff_alert').length, 1);
 
-  // Bot stays quiet while a human handles it, but the inbound is logged for the portal inbox.
-  const quiet = send(p, txt('are you there?'));
+  const quiet = await send(p, txt('are you there?'));
   assert.equal(quiet.replies.length, 0);
-  assert.ok(store.listMessages(p).some((m) => m.direction === 'in' && m.body === 'are you there?'));
+  assert.ok((await store.listMessages(p)).some((m) => m.direction === 'in' && m.body === 'are you there?'));
 
-  // "menu" brings them back to the bot.
-  assert.match(last(send(p, txt('menu'))), /help you today/);
+  assert.match(last(await send(p, txt('menu'))), /help you today/);
 });
 
-test('global "help" during a journey triggers the support handoff', () => {
+test('global "help" during a journey triggers the support handoff', async () => {
   const { store, send } = setup();
   const p = '+9199';
-  toMenu(send, p);
-  send(p, btn('menu_complaint')); // mid-journey
-  assert.match(last(send(p, txt('help'))), /support team/i);
-  assert.ok(store.listCases().some((x) => x.type === 'support'));
+  await toMenu(send, p);
+  await send(p, btn('menu_complaint'));
+  assert.match(last(await send(p, txt('help'))), /support team/i);
+  assert.ok((await store.listCases()).some((x) => x.type === 'support'));
 });

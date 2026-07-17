@@ -1,9 +1,9 @@
-// HTTP layer on Node's built-in http (zero external deps): WhatsApp webhook + admin JSON API +
-// serves the static admin panel. Run: `node src/server.js` (or `npm start`).
+// HTTP layer on Node's built-in http (zero external deps except `pg` when DATABASE_URL is set):
+// WhatsApp webhook + admin JSON API + serves the static admin panel. Run: `node src/server.js`.
 //
-// PERSISTENCE: boots with the in-memory store (great for a test-number demo; resets on restart).
-// Durable Postgres is the next leg. WhatsApp uses the Cloud API adapter when WA_* creds are set,
-// otherwise a mock adapter so the panel/API run locally with no creds.
+// PERSISTENCE: Postgres when DATABASE_URL is set (durable), otherwise in-memory (demo; resets on
+// restart). WhatsApp uses the Cloud API adapter when WA_* creds are set, else a mock adapter so the
+// panel/API run locally with no creds.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -11,23 +11,25 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { config } from './config.js';
-import { createMemoryStore } from './store/memoryStore.js';
+import { createStore } from './store/index.js';
 import { createCloudApiAdapter } from './whatsapp/cloudApi.js';
 import { createMockAdapter } from './whatsapp/mockAdapter.js';
 import { handle } from './journey/engine.js';
 import { seedAdminUsers, seedDemo } from './api/seedAdmin.js';
 import { apiRouter } from './api/routes.js';
+import { startScheduler } from './jobs.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, '..', 'public');
 
-const store = createMemoryStore();
-seedAdminUsers(store);
-if (config.seedDemo) seedDemo(store);
+const store = await createStore(config);
+await seedAdminUsers(store);
+if (config.seedDemo) await seedDemo(store);
 
 const waReady = Boolean(config.whatsapp.phoneNumberId && config.whatsapp.token);
 const adapter = waReady ? createCloudApiAdapter(config.whatsapp) : createMockAdapter();
 const deps = { store, adapter };
+startScheduler(deps);
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.ico': 'image/x-icon' };
 const CORS = {
@@ -96,11 +98,7 @@ const server = http.createServer(async (req, res) => {
     res.end('ok'); // ack fast; Meta retries on non-200
     const inbound = normalise(body);
     if (inbound) {
-      try {
-        handle(deps, inbound);
-      } catch (e) {
-        console.error('[webhook] handler error:', e);
-      }
+      handle(deps, inbound).catch((e) => console.error('[webhook] handler error:', e));
     }
     return;
   }
@@ -137,7 +135,7 @@ function normalise(body) {
 }
 
 server.listen(config.port, () => {
-  console.log(`Medinity Connect on :${config.port}  (panel: /  ·  webhook: /webhook  ·  whatsapp: ${waReady ? 'cloud-api' : 'MOCK'})`);
+  console.log(`Medinity Connect on :${config.port}  (panel: /  ·  webhook: /webhook  ·  store: ${store.kind}  ·  whatsapp: ${waReady ? 'cloud-api' : 'MOCK'})`);
   if (!waReady) console.warn('[whatsapp] not configured — using mock adapter; webhook inert until WA_* creds are set.');
-  console.warn('[persistence] in-memory store — data resets on restart (Postgres is the next leg).');
+  if (store.kind === 'memory') console.warn('[persistence] in-memory store — data resets on restart. Set DATABASE_URL for Postgres.');
 });

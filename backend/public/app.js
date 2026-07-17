@@ -174,6 +174,9 @@ async function openCase(id) {
     .reverse()
     .map((e) => `<div class="ev"><span class="t">${fmt(e.at)}</span> &middot; ${esc(e.type)}${e.payload && e.payload.status ? ' &rarr; ' + esc(e.payload.status) : ''} <span class="t">(${esc(e.actor)})</span></div>`)
     .join('');
+  const convo = (c.messages || [])
+    .map((m) => `<div class="msg ${m.direction === 'in' ? 'in' : 'out'}">${esc(m.body)}${m.agent ? ` <span class="t">· ${esc(m.agent)}</span>` : ''}</div>`)
+    .join('');
 
   const canNotify = c.type !== 'support';
   const overlay = document.createElement('div');
@@ -196,6 +199,9 @@ async function openCase(id) {
         </div>
         <div class="section-title" style="margin-top:0">History</div>
         <div class="timeline">${evRows || '<div class="ev t">No history yet.</div>'}</div>
+        <div class="section-title">Conversation</div>
+        <div class="convo">${convo || '<div class="ev t">No messages yet.</div>'}</div>
+        <div class="reply-row"><input id="reply" placeholder="Type a reply to the patient..." autocomplete="off" /><button class="btn sm" id="sendReply">Send</button></div>
         <div class="actions">
           ${c.status !== 'resolved' && c.status !== 'closed' ? `
             <button class="btn ghost sm" data-act="assigned">Assign to me</button>
@@ -216,10 +222,21 @@ async function openCase(id) {
       if (status === 'assigned') await api('/api/cases/' + id + '/assign', { method: 'POST', body: {} });
       await api('/api/cases/' + id + '/status', { method: 'POST', body: { status, notify } });
       close();
-      toast(`Ticket ${c.humanNo} &rarr; ${label(status)}${notify ? ' (patient notified)' : ''}`.replace('&rarr;', '→'));
+      toast(`Ticket ${c.humanNo} → ${label(status)}${notify ? ' (patient notified)' : ''}`);
       loadTickets();
     }),
   );
+  const sendReply = async () => {
+    const inp = overlay.querySelector('#reply');
+    const text = (inp.value || '').trim();
+    if (!text) return;
+    await api('/api/cases/' + id + '/reply', { method: 'POST', body: { body: text } });
+    close();
+    toast('Reply sent to patient');
+    openCase(id);
+  };
+  overlay.querySelector('#sendReply').addEventListener('click', sendReply);
+  overlay.querySelector('#reply').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendReply(); });
 }
 
 // ---------------- bookings ----------------

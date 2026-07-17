@@ -87,6 +87,12 @@ tbody tr.click:hover { background: #f7fafb; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; border-top: 1px solid var(--line); padding-top: 16px; }
 .check { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12.5px; }
 .check input { width: auto; }
+.convo { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 12px; max-height: 220px; overflow-y: auto; }
+.msg { max-width: 82%; padding: 7px 11px; border-radius: 12px; font-size: 13px; line-height: 1.35; word-break: break-word; }
+.msg.in { align-self: flex-start; background: #eef1f3; border-bottom-left-radius: 3px; }
+.msg.out { align-self: flex-end; background: #e3f1f4; border-bottom-right-radius: 3px; }
+.reply-row { display: flex; gap: 8px; margin-bottom: 16px; }
+.reply-row input { flex: 1; }
 .empty { padding: 30px; text-align: center; color: var(--muted); }
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #14586a; color: #fff; padding: 10px 18px; border-radius: 22px; font-size: 13px; box-shadow: var(--shadow); z-index: 100; }
 

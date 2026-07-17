@@ -20,7 +20,7 @@ export function resolveChoice(inbound, options) {
 }
 
 // Move the session to `step` and emit that step's prompt. `ctx.journey` must be set by the engine.
-export function advance(ctx, step) {
+export async function advance(ctx, step) {
   ctx.session.step = step;
-  ctx.journey.steps[step].prompt(ctx);
+  await ctx.journey.steps[step].prompt(ctx);
 }
