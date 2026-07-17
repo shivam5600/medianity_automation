@@ -51,8 +51,14 @@ See the design/spec: `~/.claude/plans/hi-i-need-resilient-floyd.md`.
 - **Scheduler** (`jobs.js`, in-process): expire slot holds, flag SLA breaches, feedback + appointment
   reminders — each idempotent. (n8n can still be added later for a Google-Sheet mirror.)
 
-**Deploy:** Render web service `medinity-connect` (Virginia, co-located with the us-east Neon).
-For production, co-locate both in Singapore/ap-south and set `SEED_DEMO=0`.
+**Live (split deploy):**
+- **Backend** (panel + API + webhook + scheduler) → Render: https://medinity-connect.onrender.com
+- **Panel** → Vercel: https://medinity-panel-kumarshivamiitbhu-7050s-projects.vercel.app (points at the
+  Render API via `window.MEDINITY_API`). Deployed as a static snapshot — re-deploy after panel edits,
+  or connect the repo in the Vercel dashboard (root `backend/public`) for auto-deploy.
+- **DB** → Neon (Postgres, us-east). Backend is Virginia to co-locate.
+- Notes: Render free tier sleeps after ~15min idle (first message slow — use Render Starter $7/mo for
+  always-on). For production, co-locate Render + Neon in Singapore/ap-south and set `SEED_DEMO=0`.
 
 **Remaining to go live for real patients:** Meta business verification + `WA_*` creds + approved
 templates (see DEPLOY.md).
