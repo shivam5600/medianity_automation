@@ -1,5 +1,6 @@
 node_modules/
 backend/creds.local.json
+backend/package-lock.json
 *.log
 .DS_Store
 .vercel

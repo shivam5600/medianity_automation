@@ -42,11 +42,20 @@ See the design/spec: `~/.claude/plans/hi-i-need-resilient-floyd.md`.
 - **Live layer built:** Meta Cloud API adapter (`whatsapp/cloudApi.js`), webhook server (`server.js`),
   portable config (`config.js`). Deploy + add creds = live on a Meta **test number**.
 
-**Next legs (in order):**
-1. **Durable Postgres store** — makes the store async (small refactor, guarded by the test suite).
-2. **Admin panel** (React, JR-admin style: clean UI + dashboard — leads, open/resolved, ETA/SLA,
-   ratings, by-team, pending bookings). Also the **portal ↔ WhatsApp two-way inbox** (admin reads/replies).
-3. **n8n timed flows** — appointment reminders, SLA escalation, feedback reminder, central-Sheet sync.
+**Also done:**
+- **Durable Postgres store** — async store + `pgStore` (transactions + `SELECT … FOR UPDATE`),
+  verified against a live Neon DB incl. concurrent no-double-booking. Falls back to in-memory when
+  `DATABASE_URL` is unset. Idempotent, fail-loud migrations (`npm run migrate`).
+- **Admin panel** (JR-style: dashboard, tickets board, case detail, bookings) + **two-way inbox**
+  (agent free-text replies from the case view → patient's WhatsApp).
+- **Scheduler** (`jobs.js`, in-process): expire slot holds, flag SLA breaches, feedback + appointment
+  reminders — each idempotent. (n8n can still be added later for a Google-Sheet mirror.)
+
+**Deploy:** Render web service `medinity-connect` (Virginia, co-located with the us-east Neon).
+For production, co-locate both in Singapore/ap-south and set `SEED_DEMO=0`.
+
+**Remaining to go live for real patients:** Meta business verification + `WA_*` creds + approved
+templates (see DEPLOY.md).
 
 ## Flow reference
 
