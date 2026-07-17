@@ -1,0 +1,24 @@
+# Render blueprint for the all-in-one Node service (serves panel + admin API + WhatsApp webhook).
+# Zero dependencies, so there is no build step. Set the WA_* secrets in the Render dashboard.
+services:
+  - type: web
+    name: medinity-connect
+    runtime: node
+    plan: free
+    rootDir: backend
+    buildCommand: ""
+    startCommand: node src/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: SEED_DEMO
+        value: "0" # set "1" only if you want the sample cases seeded
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: WA_PHONE_NUMBER_ID
+        sync: false
+      - key: WA_TOKEN
+        sync: false
+      - key: WA_VERIFY_TOKEN
+        sync: false
+      - key: WA_APP_SECRET
+        sync: false

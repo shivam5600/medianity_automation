@@ -1,0 +1,15 @@
+{
+  "name": "medinity-connect-backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Medinity Connect — WhatsApp patient ecosystem backend (journey engine, cases, bookings).",
+  "scripts": {
+    "test": "node --test",
+    "start": "node src/server.js",
+    "migrate": "node src/db/migrate.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

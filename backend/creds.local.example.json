@@ -1,0 +1,10 @@
+{
+  "_comment": "Copy to creds.local.json (gitignored) and fill in. Env vars override these.",
+  "PORT": 8098,
+  "DATABASE_URL": "",
+  "WA_PHONE_NUMBER_ID": "from Meta > WhatsApp > API Setup (Phone number ID)",
+  "WA_TOKEN": "permanent System User access token from Meta Business settings",
+  "WA_VERIFY_TOKEN": "medinity-verify (any string; enter the same one in Meta webhook setup)",
+  "WA_API_VERSION": "v21.0",
+  "WA_APP_SECRET": "optional: app secret to verify inbound webhook signatures"
+}
