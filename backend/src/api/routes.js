@@ -28,7 +28,11 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
   if (!user || !user.active) return { status: 401, json: { error: 'unauthorized' } };
 
   if (path === '/api/me' && method === 'GET') return { status: 200, json: publicUser(user) };
-  if (path === '/api/metrics' && method === 'GET') return { status: 200, json: await computeMetrics(store) };
+  if (path === '/api/metrics' && method === 'GET') {
+    const from = query.from ? Number(query.from) : null;
+    const to = query.to ? Number(query.to) : null;
+    return { status: 200, json: await computeMetrics(store, { from, to }) };
+  }
   if (path === '/api/config' && method === 'GET') {
     return { status: 200, json: { teams: await store.listTeams(), categories: await store.listComplaintCategories() } };
   }

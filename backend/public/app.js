@@ -1,25 +1,50 @@
 'use strict';
 
-// Same-origin by default (backend serves the panel). For a split deploy (panel on Vercel, API on
-// Render), set window.MEDINITY_API = 'https://your-backend.onrender.com' in index.html.
 const API_BASE = (window.MEDINITY_API || '').replace(/\/$/, '');
-
 const S = {
   token: localStorage.getItem('mc_token') || null,
   user: JSON.parse(localStorage.getItem('mc_user') || 'null'),
   view: 'dashboard',
+  range: localStorage.getItem('mc_range') || '30d',
   filters: { status: '', type: '' },
+  metrics: null,
 };
 const app = () => document.getElementById('app');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+/* ---------------- icons (inline SVG, lucide-style) ---------------- */
+const P = {
+  grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
+  ticket: '<path d="M2 9a3 3 0 0 0 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 0 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z"/><path d="M13 5v14"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  alert: '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/>',
+  logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5M21 12H9"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  star: '<path d="M12 2l3 6.5 7 .9-5 4.8 1.2 7L12 18l-6.4 3.2L6.8 14l-5-4.8 7-.9z"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.7"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2 4.2 2 2 0 0 1 4 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7A2 2 0 0 1 22 16.9z"/>',
+  send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/>',
+  x: '<path d="M18 6 6 18M6 6l12 12"/>',
+  pin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="3"/>',
+  headset: '<path d="M3 14v-2a9 9 0 0 1 18 0v2"/><path d="M21 15v2a3 3 0 0 1-3 3h-2"/><rect x="2" y="14" width="4" height="6" rx="1"/><rect x="18" y="14" width="4" height="6" rx="1"/>',
+  trend: '<path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/>',
+  pie: '<path d="M21.2 15.9A10 10 0 1 1 8 2.8"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
+  check: '<path d="M22 11v1a10 10 0 1 1-5.9-9.1"/><path d="m22 4-10 10-3-3"/>',
+  chart: '<path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/>',
+};
+const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[name] || ''}</svg>`;
+
+/* ---------------- api ---------------- */
 async function api(path, { method = 'GET', body } = {}) {
   const res = await fetch(API_BASE + path, {
     method,
     headers: { 'Content-Type': 'application/json', ...(S.token ? { Authorization: 'Bearer ' + S.token } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (res.status === 401 && S.token) return logout();
+  if (res.status === 401 && S.token) return logout(), Promise.reject(new Error('unauthorized'));
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json.error || 'Request failed');
   return json;
@@ -32,38 +57,43 @@ function toast(msg) {
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2600);
 }
-
 function logout() {
-  S.token = null;
-  S.user = null;
-  localStorage.removeItem('mc_token');
-  localStorage.removeItem('mc_user');
+  S.token = null; S.user = null; S.metrics = null;
+  localStorage.removeItem('mc_token'); localStorage.removeItem('mc_user');
   renderLogin();
 }
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  const next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('mc_theme', next);
+  if (S.token) renderShell(); // repaint icons/charts for the new theme
+}
+const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
 
-// ---------------- login ----------------
+/* ---------------- login ---------------- */
 function renderLogin(err = '') {
   app().innerHTML = `
     <div class="login-wrap">
       <form class="login-card" id="loginForm">
-        <div class="brand"><div class="mark">M</div><div><b>Medinity Connect</b><span>Staff admin panel</span></div></div>
+        <div class="brand"><div class="mark">M</div><div><b>Medinity Connect</b><small>Staff admin panel</small></div></div>
         <label>Email</label>
         <input id="login" type="text" autocomplete="username" value="admin@medinity.local" />
         <label>Password</label>
         <input id="password" type="password" autocomplete="current-password" value="" />
         <div class="error">${esc(err)}</div>
         <button class="btn full" type="submit">Sign in</button>
-        <div class="hint">Pilot logins &mdash; admin@medinity.local / medinity@123 (super admin) &middot; housekeeping@medinity.local / house@123 (team lead).</div>
+        <div class="hint">Pilot logins · admin@medinity.local / medinity@123 (super admin) · housekeeping@medinity.local / house@123 (team lead).</div>
       </form>
     </div>`;
   document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
       const out = await api('/api/login', { method: 'POST', body: { login: document.getElementById('login').value, password: document.getElementById('password').value } });
-      S.token = out.token;
-      S.user = out.user;
+      S.token = out.token; S.user = out.user;
       localStorage.setItem('mc_token', out.token);
       localStorage.setItem('mc_user', JSON.stringify(out.user));
+      S.metrics = null;
       renderShell();
     } catch (ex) {
       renderLogin(ex.message);
@@ -71,119 +101,234 @@ function renderLogin(err = '') {
   });
 }
 
-// ---------------- shell ----------------
-function renderShell() {
-  const tabs = [
-    ['dashboard', 'Dashboard'],
-    ['tickets', 'Tickets'],
-    ['bookings', 'Bookings'],
+/* ---------------- shell ---------------- */
+const roleLabel = (r) => ({ super_admin: 'Super Admin', team_lead: 'Team Lead', agent: 'Agent' }[r] || r);
+
+async function renderShell() {
+  try {
+    S.metrics = await api('/api/metrics?' + rangeQuery()); // also feeds nav counts
+  } catch (e) { if (e.message === 'unauthorized') return; }
+  const k = S.metrics?.kpis || {};
+  const alertCount = (S.metrics?.alerts?.sla?.length || 0) + (S.metrics?.alerts?.support?.length || 0);
+  const navItems = [
+    ['dashboard', 'Dashboard', 'grid', null],
+    ['tickets', 'Tickets', 'ticket', k.openTickets || 0],
+    ['bookings', 'Bookings', 'calendar', k.pendingBookings || 0],
   ];
   app().innerHTML = `
-    <div class="topbar">
-      <div class="brand"><div class="mark">M</div><b>Medinity Connect</b></div>
-      <div class="who"><span>${esc(S.user.name)} &middot; ${esc(roleLabel(S.user.role))}</span><button class="btn ghost sm" id="logout">Logout</button></div>
-    </div>
-    <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${S.view === k ? 'active' : ''}" data-v="${k}">${l}</button>`).join('')}</div>
-    <div class="main" id="main"></div>`;
-  document.getElementById('logout').addEventListener('click', logout);
-  document.querySelectorAll('.tab').forEach((b) => b.addEventListener('click', () => { S.view = b.dataset.v; renderShell(); }));
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand"><div class="mark">M</div><div><b>Medinity</b><small>Connect · Admin</small></div></div>
+        <nav class="nav">
+          ${navItems.map(([v, l, ic, c]) => `
+            <button data-v="${v}" class="${S.view === v ? 'active' : ''}">${icon(ic)} <span>${l}</span>
+              ${c ? `<span class="count ${v === 'tickets' && alertCount ? 'hot' : ''}">${c}</span>` : ''}</button>`).join('')}
+        </nav>
+        <div class="side-foot">
+          <div class="who"><b>${esc(S.user.name)}</b>${esc(roleLabel(S.user.role))}</div>
+          <button id="themeBtn">${icon(isDark() ? 'sun' : 'moon')} <span>${isDark() ? 'Light mode' : 'Dark mode'}</span></button>
+          <button id="logoutBtn">${icon('logout')} <span>Logout</span></button>
+        </div>
+      </aside>
+      <main class="content"><div id="page"></div></main>
+    </div>`;
+  document.querySelectorAll('.nav button').forEach((b) => b.addEventListener('click', () => { S.view = b.dataset.v; renderShell(); }));
+  document.getElementById('themeBtn').addEventListener('click', toggleTheme);
+  document.getElementById('logoutBtn').addEventListener('click', logout);
   ({ dashboard: viewDashboard, tickets: viewTickets, bookings: viewBookings }[S.view])();
 }
+const page = () => document.getElementById('page');
 
-const roleLabel = (r) => ({ super_admin: 'Super Admin', team_lead: 'Team Lead', agent: 'Agent' }[r] || r);
-const main = () => document.getElementById('main');
+/* ---------------- date range ---------------- */
+const RANGES = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days', all: 'All time' };
+function rangeQuery() {
+  if (S.range === 'all') return '';
+  const days = { '7d': 7, '30d': 30, '90d': 90 }[S.range] || 30;
+  const to = Date.now();
+  const from = to - days * 86400000;
+  return `from=${from}&to=${to}`;
+}
 
-// ---------------- dashboard ----------------
-async function viewDashboard() {
-  main().innerHTML = `<div class="empty">Loading&hellip;</div>`;
-  const m = await api('/api/metrics');
+/* ---------------- dashboard ---------------- */
+function viewDashboard() {
+  const m = S.metrics;
+  const k = m?.kpis || {};
   const cards = [
-    ['Leads', m.leads],
-    ['Open tickets', m.openTickets],
-    ['Resolved', m.resolved],
-    ['Pending bookings', m.pendingBookings],
-    ['SLA breaches', m.slaBreaches, m.slaBreaches > 0],
-    ['Support handoffs', m.supportHandoffs],
-    ['Avg rating', m.avgRating == null ? '·' : m.avgRating],
-    ['Avg resolution (min)', m.avgResolutionMin == null ? '·' : m.avgResolutionMin],
+    ['leads', 'Leads', k.leads, 'users', ''],
+    ['open', 'Open tickets', k.openTickets, 'ticket', ''],
+    ['resolved', 'Resolved', k.resolved, 'check', ''],
+    ['bookings', 'Pending bookings', k.pendingBookings, 'calendar', k.pendingBookings ? 'warn' : ''],
+    ['sla', 'SLA breaches', k.slaBreaches, 'alert', k.slaBreaches ? 'alert' : ''],
+    ['support', 'Support handoffs', k.supportHandoffs, 'headset', ''],
+    ['rating', 'Avg rating', k.avgRating == null ? '·' : k.avgRating, 'star', ''],
+    ['res', 'Avg resolution', k.avgResolutionMin == null ? '·' : k.avgResolutionMin + 'm', 'clock', ''],
   ];
-  main().innerHTML = `
-    <div class="grid">
-      ${cards.map(([l, n, warn]) => `<div class="metric ${warn ? 'warn' : ''}"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('')}
+  page().innerHTML = `
+    <div class="pagehead">
+      <div><h1>Dashboard</h1><div class="sub">${RANGES[S.range]} · live from WhatsApp</div></div>
+      <div class="rangebar">${Object.entries(RANGES).map(([k2, l]) => `<button data-r="${k2}" class="${S.range === k2 ? 'active' : ''}">${l.replace('Last ', '')}</button>`).join('')}</div>
     </div>
-    <div class="section-title">By team</div>
-    <div class="panel table-scroll">
-      <table>
-        <thead><tr><th>Team</th><th>Total</th><th>Open</th><th>Resolved</th></tr></thead>
-        <tbody>${m.byTeam.map((t) => `<tr><td>${esc(t.team)}</td><td>${t.total}</td><td>${t.open}</td><td>${t.resolved}</td></tr>`).join('')}</tbody>
-      </table>
+    <div class="main">
+      <div class="kpis">
+        ${cards.map(([id, l, n, ic, cls]) => `<div class="kpi ${cls}"><div class="ic">${icon(ic)}</div><div><div class="n">${n ?? 0}</div><div class="l">${l}</div></div></div>`).join('')}
+      </div>
+      ${alertsPanel(m?.alerts)}
+      <div class="grid2">
+        <div class="panel"><h3>${icon('trend')} Ticket volume</h3><div class="body">${lineChart(m?.daily || [])}</div></div>
+        <div class="panel"><h3>${icon('pie')} Status mix</h3><div class="body">${donut(m?.statusCounts || {})}</div></div>
+      </div>
+      <div class="panel"><h3>${icon('chart')} By team</h3><div class="body">${teamBars(m?.byTeam || [])}</div></div>
+    </div>`;
+  page().querySelectorAll('.rangebar button').forEach((b) =>
+    b.addEventListener('click', async () => { S.range = b.dataset.r; localStorage.setItem('mc_range', S.range); S.metrics = await api('/api/metrics?' + rangeQuery()); renderShell(); }),
+  );
+  wireAlerts();
+}
+
+function alertsPanel(a) {
+  if (!a) return '';
+  const total = a.sla.length + a.bookings.length + a.support.length;
+  if (!total) return `<div class="panel" style="margin-bottom:16px"><h3>${icon('bell')} Alerts</h3><div class="body"><div class="alert-empty">${icon('check', 'sm')} All clear · no open alerts.</div></div></div>`;
+  const col = (title, ic, color, items) => `
+    <div class="alert-col">
+      <h4>${icon(ic, 'sm')} ${title} <span style="color:var(--muted)">(${items.length})</span></h4>
+      ${items.length ? items.map((it) => it).join('') : `<div class="alert-empty">None</div>`}
+    </div>`;
+  const slaItems = a.sla.map((x) => `<div class="alert-item" data-open="${esc(x.id)}" style="--al:var(--c-red)"><div><div class="t">${esc(x.humanNo)} · ${esc(x.team)}</div><div class="s">Room ${esc(x.roomBed)} · overdue ${x.overdueMin}m</div></div>${icon('alert', 'sm')}</div>`);
+  const bkItems = a.bookings.map((x) => `<div class="alert-item" data-bookings="1" style="--al:var(--c-amber)"><div><div class="t">${esc(x.patientName)}</div><div class="s">${esc(x.doctor)} · ${esc(x.slot)}</div></div>${icon('calendar', 'sm')}</div>`);
+  const spItems = a.support.map((x) => `<div class="alert-item" data-open="${esc(x.id)}" style="--al:var(--c-teal)"><div><div class="t">${esc(x.humanNo)}</div><div class="s">${esc(x.waPhone)}</div></div>${icon('headset', 'sm')}</div>`);
+  return `<div class="panel" style="margin-bottom:16px"><h3>${icon('bell')} Alerts · needs attention</h3><div class="body"><div class="alerts">
+    ${col('SLA breaches', 'alert', 'red', slaItems)}
+    ${col('Pending bookings', 'calendar', 'amber', bkItems)}
+    ${col('Support handoffs', 'headset', 'teal', spItems)}
+  </div></div></div>`;
+}
+function wireAlerts() {
+  page().querySelectorAll('[data-open]').forEach((el) => el.addEventListener('click', () => openCase(el.dataset.open)));
+  page().querySelectorAll('[data-bookings]').forEach((el) => el.addEventListener('click', () => { S.view = 'bookings'; renderShell(); }));
+}
+
+/* ---------------- charts (inline SVG) ---------------- */
+function lineChart(daily) {
+  if (!daily.length) return `<div class="empty">No tickets in this period.</div>`;
+  const W = 560, H = 190, pl = 6, pr = 6, pt = 12, pb = 22, iw = W - pl - pr, ih = H - pt - pb;
+  const n = daily.length;
+  const max = Math.max(1, ...daily.flatMap((d) => [d.created, d.resolved]));
+  const x = (i) => (n <= 1 ? pl + iw / 2 : pl + (i / (n - 1)) * iw);
+  const y = (v) => pt + ih - (v / max) * ih;
+  const path = (key) => daily.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(d[key]).toFixed(1)}`).join(' ');
+  const area = `M${x(0)} ${pt + ih} ${daily.map((d, i) => `L${x(i).toFixed(1)} ${y(d.created).toFixed(1)}`).join(' ')} L${x(n - 1)} ${pt + ih} Z`;
+  const grid = [0, 0.5, 1].map((f) => `<line class="chart-grid" x1="${pl}" x2="${W - pr}" y1="${pt + ih - f * ih}" y2="${pt + ih - f * ih}"/><text class="axis-label" x="${pl}" y="${pt + ih - f * ih - 3}">${Math.round(f * max)}</text>`).join('');
+  const xl = [0, Math.floor(n / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i).map((i) => `<text class="axis-label" x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle">${daily[i].date.slice(5)}</text>`).join('');
+  const dots = (key, col) => daily.map((d, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(d[key]).toFixed(1)}" r="2.5" style="fill:${col}"/>`).join('');
+  return `
+    <svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Ticket volume">
+      ${grid}
+      <path d="${area}" style="fill:var(--brand);opacity:.10"/>
+      <path d="${path('created')}" style="fill:none;stroke:var(--brand);stroke-width:2.2"/>
+      <path d="${path('resolved')}" style="fill:none;stroke:var(--c-green);stroke-width:2.2"/>
+      ${dots('created', 'var(--brand)')}${dots('resolved', 'var(--c-green)')}
+      ${xl}
+    </svg>
+    <div class="legend"><span><i style="background:var(--brand)"></i>Created</span><span><i style="background:var(--c-green)"></i>Resolved</span></div>`;
+}
+
+const STATUS_COL = { new: 'var(--c-blue)', assigned: 'var(--c-amber)', in_progress: 'var(--c-indigo)', resolved: 'var(--c-green)', closed: 'var(--c-slate)' };
+function donut(sc) {
+  const entries = Object.entries(sc).filter(([, v]) => v > 0);
+  const total = entries.reduce((a, [, v]) => a + v, 0);
+  if (!total) return `<div class="empty">No tickets in this period.</div>`;
+  const r = 46, C = 2 * Math.PI * r;
+  let off = 0;
+  const segs = entries.map(([k, v]) => {
+    const len = (v / total) * C;
+    const s = `<circle cx="60" cy="60" r="${r}" fill="none" stroke-width="16" style="stroke:${STATUS_COL[k]}" stroke-dasharray="${len.toFixed(2)} ${(C - len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}"/>`;
+    off += len;
+    return s;
+  }).join('');
+  const legend = entries.map(([k, v]) => `<span><i style="background:${STATUS_COL[k]}"></i>${label(k)} · ${v}</span>`).join('');
+  return `
+    <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+      <svg viewBox="0 0 120 120" style="width:132px;height:132px;flex:none" role="img" aria-label="Status mix">
+        <g transform="rotate(-90 60 60)"><circle cx="60" cy="60" r="${r}" fill="none" stroke-width="16" style="stroke:var(--surface-2)"/>${segs}</g>
+        <text x="60" y="57" text-anchor="middle" style="fill:var(--ink);font-size:22px;font-weight:800">${total}</text>
+        <text x="60" y="74" text-anchor="middle" style="fill:var(--muted);font-size:10px">tickets</text>
+      </svg>
+      <div class="legend" style="flex-direction:column;gap:7px;margin:0">${legend}</div>
     </div>`;
 }
 
-// ---------------- tickets ----------------
+function teamBars(rows) {
+  const data = rows.filter((r) => r.total > 0).sort((a, b) => b.total - a.total);
+  if (!data.length) return `<div class="empty">No tickets in this period.</div>`;
+  const max = Math.max(1, ...data.map((r) => r.total));
+  return `<div class="bars">${data.map((r) => {
+    const other = Math.max(0, r.total - r.open - r.resolved);
+    const w = (v) => ((v / max) * 100).toFixed(1) + '%';
+    return `<div class="bar-row"><div class="name" title="${esc(r.team)}">${esc(r.team)}</div>
+      <div class="bar-track"><div class="bar-seg" style="width:${w(r.resolved)};background:var(--c-green)"></div><div class="bar-seg" style="width:${w(r.open)};background:var(--c-amber)"></div><div class="bar-seg" style="width:${w(other)};background:var(--c-slate)"></div></div>
+      <div class="val">${r.total}</div></div>`;
+  }).join('')}</div>
+  <div class="legend"><span><i style="background:var(--c-amber)"></i>Open</span><span><i style="background:var(--c-green)"></i>Resolved</span><span><i style="background:var(--c-slate)"></i>Other</span></div>`;
+}
+
+/* ---------------- tickets ---------------- */
 async function viewTickets() {
-  main().innerHTML = `
-    <div class="filters">
-      <select id="fStatus">
-        <option value="">All statuses</option>
-        ${['new', 'assigned', 'in_progress', 'resolved', 'closed'].map((s) => `<option ${S.filters.status === s ? 'selected' : ''} value="${s}">${label(s)}</option>`).join('')}
-      </select>
-      <select id="fType">
-        <option value="">All types</option>
-        ${['complaint', 'enquiry', 'support'].map((s) => `<option ${S.filters.type === s ? 'selected' : ''} value="${s}">${label(s)}</option>`).join('')}
-      </select>
-    </div>
-    <div class="panel table-scroll" id="ticketsPanel"><div class="empty">Loading&hellip;</div></div>`;
+  page().innerHTML = `
+    <div class="pagehead"><div><h1>Tickets</h1><div class="sub">Complaints, appointments and support</div></div></div>
+    <div class="main">
+      <div class="filters">
+        <select id="fStatus"><option value="">All statuses</option>${['new', 'assigned', 'in_progress', 'resolved', 'closed'].map((s) => `<option ${S.filters.status === s ? 'selected' : ''} value="${s}">${label(s)}</option>`).join('')}</select>
+        <select id="fType"><option value="">All types</option>${['complaint', 'enquiry', 'support'].map((s) => `<option ${S.filters.type === s ? 'selected' : ''} value="${s}">${label(s)}</option>`).join('')}</select>
+      </div>
+      <div id="cards"><div class="empty">Loading…</div></div>
+    </div>`;
   document.getElementById('fStatus').addEventListener('change', (e) => { S.filters.status = e.target.value; loadTickets(); });
   document.getElementById('fType').addEventListener('change', (e) => { S.filters.type = e.target.value; loadTickets(); });
   loadTickets();
 }
-
 async function loadTickets() {
   const q = new URLSearchParams();
   if (S.filters.status) q.set('status', S.filters.status);
   if (S.filters.type) q.set('type', S.filters.type);
   const cases = await api('/api/cases?' + q.toString());
-  const panel = document.getElementById('ticketsPanel');
-  if (!cases.length) return (panel.innerHTML = `<div class="empty">No tickets match.</div>`);
-  panel.innerHTML = `
-    <table>
-      <thead><tr><th>Ticket</th><th>Type</th><th>Category</th><th>Patient</th><th>Room</th><th>Team</th><th>Status</th></tr></thead>
-      <tbody>
-        ${cases.map((c) => `
-          <tr class="click" data-id="${c.id}">
-            <td>${esc(c.humanNo)}</td>
-            <td><span class="badge b-type">${label(c.type)}</span></td>
-            <td>${esc(c.categoryName)}</td>
-            <td>${esc(c.patientName || '·')}</td>
-            <td>${esc(c.roomBed || '·')}</td>
-            <td>${esc(c.teamName)}</td>
-            <td><span class="badge b-${c.status}">${label(c.status)}</span> ${c.slaBreached ? '<span class="badge b-sla">SLA</span>' : ''}</td>
-          </tr>`).join('')}
-      </tbody>
-    </table>`;
-  panel.querySelectorAll('tr.click').forEach((tr) => tr.addEventListener('click', () => openCase(tr.dataset.id)));
+  const el = document.getElementById('cards');
+  if (!cases.length) return (el.innerHTML = `<div class="empty">No tickets match.</div>`);
+  el.className = 'cards';
+  el.innerHTML = cases.map((c) => `
+    <div class="tcard" data-id="${esc(c.id)}" style="--accent:${STATUS_COL[c.status] || 'var(--brand)'}">
+      <div class="top"><span class="no">${esc(c.humanNo)}</span><span class="badge b-type">${label(c.type)}</span></div>
+      <div class="cat">${esc(catName(c.categoryName))}</div>
+      <div class="desc">${esc(c.description || '·')}</div>
+      <div class="meta">
+        <span>${icon('users', 'sm')} <b>${esc(c.patientName || '·')}</b></span>
+        ${c.roomBed ? `<span>${icon('pin', 'sm')} ${esc(c.roomBed)}</span>` : ''}
+        <span>${icon('clock', 'sm')} ${timeAgo(c.createdAt)}</span>
+      </div>
+      <div class="meta" style="margin-top:9px">
+        <span class="badge b-${c.status}">${label(c.status)}</span>
+        ${c.slaBreached ? `<span class="badge b-sla">${icon('alert', 'sm')} SLA</span>` : ''}
+        <span style="margin-left:auto;color:var(--muted)">${esc(c.teamName)}</span>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('.tcard').forEach((c) => c.addEventListener('click', () => openCase(c.dataset.id)));
 }
 
-// ---------------- case detail ----------------
+/* ---------------- case detail (feature parity: status / assign / notify / reply) ---------------- */
 async function openCase(id) {
   const c = await api('/api/cases/' + id);
   const photo = (c.attachments || []).find((a) => a.kind === 'image');
-  const evRows = (c.events || [])
-    .slice()
-    .reverse()
-    .map((e) => `<div class="ev"><span class="t">${fmt(e.at)}</span> &middot; ${esc(e.type)}${e.payload && e.payload.status ? ' &rarr; ' + esc(e.payload.status) : ''} <span class="t">(${esc(e.actor)})</span></div>`)
-    .join('');
-  const convo = (c.messages || [])
-    .map((m) => `<div class="msg ${m.direction === 'in' ? 'in' : 'out'}">${esc(m.body)}${m.agent ? ` <span class="t">· ${esc(m.agent)}</span>` : ''}</div>`)
-    .join('');
-
+  const evRows = (c.events || []).slice().reverse()
+    .map((e) => `<div class="ev"><span class="t">${fmt(e.at)}</span> · ${esc(e.type)}${e.payload && e.payload.status ? ' → ' + esc(e.payload.status) : ''} <span class="t">(${esc(e.actor)})</span></div>`).join('');
+  const convo = (c.messages || []).map((m) => `<div class="msg ${m.direction === 'in' ? 'in' : 'out'}">${esc(m.body)}${m.agent ? ` <span class="t">· ${esc(m.agent)}</span>` : ''}</div>`).join('');
   const canNotify = c.type !== 'support';
+  const open = c.status !== 'resolved' && c.status !== 'closed';
+
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `
     <div class="modal">
-      <header><h3>${esc(c.humanNo)} &middot; ${esc(c.categoryName)}</h3><button class="x">&times;</button></header>
+      <header><h3>${esc(c.humanNo)} · ${esc(catName(c.categoryName))}</h3><button class="x">${icon('x')}</button></header>
       <div class="body">
         <div class="kv">
           <div class="k">Patient</div><div>${esc(c.patientName || '·')} (${esc(c.patientPhone)})</div>
@@ -193,20 +338,17 @@ async function openCase(id) {
           <div class="k">Status</div><div><span class="badge b-${c.status}">${label(c.status)}</span> ${c.slaBreached ? '<span class="badge b-sla">SLA breached</span>' : ''}</div>
           ${c.etaMin ? `<div class="k">ETA</div><div>${c.etaMin} min</div>` : ''}
           <div class="k">Description</div><div>${esc(c.description || '·')}</div>
-          ${photo ? `<div class="k">Photo</div><div>${photo.url ? `<a href="${esc(photo.url)}" target="_blank">view</a>` : 'attached (WhatsApp media id ' + esc(photo.waMediaId) + ')'}</div>` : ''}
-          ${c.booking ? `<div class="k">Booking</div><div>${esc(c.booking.doctorName)}, ${esc(c.booking.slotLabel)} &middot; <span class="badge b-${c.booking.status === 'confirmed' ? 'resolved' : 'assigned'}">${esc(c.booking.status)}</span></div>` : ''}
+          ${photo ? `<div class="k">Photo</div><div>${photo.url ? `<a href="${esc(photo.url)}" target="_blank">view</a>` : 'attached (media ' + esc(photo.waMediaId) + ')'}</div>` : ''}
+          ${c.booking ? `<div class="k">Booking</div><div>${esc(c.booking.doctorName)}, ${esc(c.booking.slotLabel)} · <span class="badge b-${c.booking.status === 'confirmed' ? 'resolved' : 'assigned'}">${esc(c.booking.status)}</span></div>` : ''}
           ${c.rating ? `<div class="k">Rating</div><div>${c.rating} / 5</div>` : ''}
         </div>
-        <div class="section-title" style="margin-top:0">History</div>
+        <div class="section-title">History</div>
         <div class="timeline">${evRows || '<div class="ev t">No history yet.</div>'}</div>
         <div class="section-title">Conversation</div>
         <div class="convo">${convo || '<div class="ev t">No messages yet.</div>'}</div>
-        <div class="reply-row"><input id="reply" placeholder="Type a reply to the patient..." autocomplete="off" /><button class="btn sm" id="sendReply">Send</button></div>
+        <div class="reply-row"><input id="reply" placeholder="Type a reply to the patient..." autocomplete="off" /><button class="btn sm" id="sendReply">${icon('send', 'sm')} Send</button></div>
         <div class="actions">
-          ${c.status !== 'resolved' && c.status !== 'closed' ? `
-            <button class="btn ghost sm" data-act="assigned">Assign to me</button>
-            <button class="btn ghost sm" data-act="in_progress">On the way</button>
-            <button class="btn sm" data-act="resolved">Mark resolved</button>` : ''}
+          ${open ? `<button class="btn ghost sm" data-act="assigned">Assign to me</button><button class="btn ghost sm" data-act="in_progress">On the way</button><button class="btn sm" data-act="resolved">${icon('check', 'sm')} Resolve</button>` : ''}
           ${canNotify ? `<label class="check"><input type="checkbox" id="notify" checked /> notify patient on WhatsApp</label>` : ''}
         </div>
       </div>
@@ -222,8 +364,8 @@ async function openCase(id) {
       if (status === 'assigned') await api('/api/cases/' + id + '/assign', { method: 'POST', body: {} });
       await api('/api/cases/' + id + '/status', { method: 'POST', body: { status, notify } });
       close();
-      toast(`Ticket ${c.humanNo} → ${label(status)}${notify ? ' (patient notified)' : ''}`);
-      loadTickets();
+      toast(`Ticket ${c.humanNo} → ${label(status)}${notify ? ' · patient notified' : ''}`);
+      refreshCurrent();
     }),
   );
   const sendReply = async () => {
@@ -238,43 +380,46 @@ async function openCase(id) {
   overlay.querySelector('#sendReply').addEventListener('click', sendReply);
   overlay.querySelector('#reply').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendReply(); });
 }
+function refreshCurrent() {
+  if (S.view === 'tickets') loadTickets();
+  else renderShell();
+}
 
-// ---------------- bookings ----------------
+/* ---------------- bookings ---------------- */
 async function viewBookings() {
-  main().innerHTML = `<div class="panel table-scroll" id="bk"><div class="empty">Loading&hellip;</div></div>`;
+  page().innerHTML = `<div class="pagehead"><div><h1>Bookings</h1><div class="sub">Confirm or cancel held appointment slots</div></div></div>
+    <div class="main"><div class="panel table-scroll" id="bk"><div class="empty">Loading…</div></div></div>`;
   const rows = await api('/api/bookings');
   const bk = document.getElementById('bk');
   if (!rows.length) return (bk.innerHTML = `<div class="empty">No bookings yet.</div>`);
-  bk.innerHTML = `
-    <table>
-      <thead><tr><th>Patient</th><th>Doctor</th><th>Slot</th><th>Status</th><th></th></tr></thead>
-      <tbody>
-        ${rows.map((b) => `
-          <tr>
-            <td>${esc(b.patientName || '·')}</td>
-            <td>${esc(b.doctorName)}</td>
-            <td>${esc(b.slotLabel)}</td>
-            <td><span class="badge b-${b.status === 'confirmed' ? 'resolved' : b.status === 'cancelled' ? 'closed' : 'assigned'}">${esc(b.status)}</span></td>
-            <td>${['held', 'pending'].includes(b.status) ? `<button class="btn sm" data-c="${b.id}">Confirm</button> <button class="btn ghost sm" data-x="${b.id}">Cancel</button>` : ''}</td>
-          </tr>`).join('')}
-      </tbody>
-    </table>`;
-  bk.querySelectorAll('[data-c]').forEach((btn) =>
-    btn.addEventListener('click', async () => { await api('/api/bookings/' + btn.dataset.c + '/confirm', { method: 'POST', body: { notify: true } }); toast('Booking confirmed · patient notified'); viewBookings(); }),
-  );
-  bk.querySelectorAll('[data-x]').forEach((btn) =>
-    btn.addEventListener('click', async () => { await api('/api/bookings/' + btn.dataset.x + '/cancel', { method: 'POST', body: {} }); toast('Booking cancelled'); viewBookings(); }),
-  );
+  bk.innerHTML = `<table><thead><tr><th>Patient</th><th>Doctor</th><th>Slot</th><th>Status</th><th></th></tr></thead><tbody>
+    ${rows.map((b) => `<tr>
+      <td>${esc(b.patientName || '·')}</td><td>${esc(b.doctorName)}</td><td>${esc(b.slotLabel)}</td>
+      <td><span class="badge b-${b.status === 'confirmed' ? 'resolved' : b.status === 'cancelled' ? 'closed' : 'assigned'}">${esc(b.status)}</span></td>
+      <td style="text-align:right">${['held', 'pending'].includes(b.status) ? `<button class="btn sm" data-c="${esc(b.id)}">${icon('check', 'sm')} Confirm</button> <button class="btn ghost sm" data-x="${esc(b.id)}">Cancel</button>` : ''}</td>
+    </tr>`).join('')}</tbody></table>`;
+  bk.querySelectorAll('[data-c]').forEach((btn) => btn.addEventListener('click', async () => { await api('/api/bookings/' + btn.dataset.c + '/confirm', { method: 'POST', body: { notify: true } }); toast('Booking confirmed · patient notified'); viewBookings(); }));
+  bk.querySelectorAll('[data-x]').forEach((btn) => btn.addEventListener('click', async () => { await api('/api/bookings/' + btn.dataset.x + '/cancel', { method: 'POST', body: {} }); toast('Booking cancelled'); viewBookings(); }));
 }
 
-// ---------------- utils ----------------
+/* ---------------- utils ---------------- */
 function label(s) {
-  return ({ new: 'New', assigned: 'Assigned', in_progress: 'In progress', resolved: 'Resolved', closed: 'Closed', complaint: 'Complaint', enquiry: 'Appointment', support: 'Support' }[s]) || s;
+  return { new: 'New', assigned: 'Assigned', in_progress: 'In progress', resolved: 'Resolved', closed: 'Closed', complaint: 'Complaint', enquiry: 'Appointment', support: 'Support' }[s] || s;
+}
+function catName(s) {
+  return { appointment: 'Appointment', support: 'Talk to our team' }[s] || s;
 }
 function fmt(ts) {
   try { return new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; }
 }
+function timeAgo(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
 
-// ---------------- boot ----------------
+/* ---------------- boot ---------------- */
 if (S.token && S.user) renderShell();
 else renderLogin();
