@@ -108,8 +108,8 @@ const STRINGS = {
     hi: (v) => `टिकट ${v.no} पर अपडेट: हमारा स्टाफ रास्ते में है।`,
   },
   status_resolved: {
-    en: (v) => `Ticket ${v.no} is resolved. How would you rate our service from 1 to 5?`,
-    hi: (v) => `टिकट ${v.no} हल हो गया है। कृपया हमारी सेवा को 1 से 5 तक रेट करें।`,
+    en: (v) => `Ticket ${v.no} is resolved. How would you rate our service? Reply with a number from 1 to 10.`,
+    hi: (v) => `टिकट ${v.no} हल हो गया है। कृपया हमारी सेवा को 1 से 10 के बीच एक अंक भेजकर रेट करें।`,
   },
   booking_confirmed: {
     en: (v) => `Your appointment is confirmed: ${v.doctor}, ${v.slot}. Ticket ${v.no}.`,
@@ -120,8 +120,8 @@ const STRINGS = {
     hi: (v) => `याद दिलाना: आपकी अपॉइंटमेंट ${v.doctor}, ${v.slot} कल है। बदलने के लिए "restart" भेजें।`,
   },
   feedback_reminder: {
-    en: (v) => `We would love your feedback on ticket ${v.no}. Please rate us 1 to 5.`,
-    hi: (v) => `टिकट ${v.no} पर आपकी प्रतिक्रिया हमारे लिए महत्वपूर्ण है। कृपया 1 से 5 तक रेट करें।`,
+    en: (v) => `We would love your feedback on ticket ${v.no}. Please reply with a number from 1 to 10.`,
+    hi: (v) => `टिकट ${v.no} पर आपकी प्रतिक्रिया हमारे लिए महत्वपूर्ण है। कृपया 1 से 10 के बीच एक अंक भेजें।`,
   },
   feedback_thanks: {
     en: 'Thank you for your feedback!',

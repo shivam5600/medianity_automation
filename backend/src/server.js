@@ -107,8 +107,12 @@ const server = http.createServer(async (req, res) => {
     const body = method === 'POST' ? await readBody(req) : {};
     const query = Object.fromEntries(u.searchParams.entries());
     try {
-      const { status, json } = await apiRouter(deps, { method, path: pathname, query, body, headers: req.headers });
-      return sendJson(res, status, json);
+      const out = await apiRouter(deps, { method, path: pathname, query, body, headers: req.headers });
+      if (out.text != null) {
+        res.writeHead(out.status, { 'Content-Type': out.contentType || 'text/plain', ...CORS });
+        return res.end(out.text);
+      }
+      return sendJson(res, out.status, out.json);
     } catch (e) {
       console.error('[api] error:', e);
       return sendJson(res, 500, { error: 'server error' });

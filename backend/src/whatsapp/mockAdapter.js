@@ -20,5 +20,10 @@ export function createMockAdapter() {
     reset() {
       sent.length = 0;
     },
+    // Tiny test image so the complaint-photo flow is exercisable without live WhatsApp.
+    async downloadMedia() {
+      const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+      return { buffer: Buffer.from(b64, 'base64'), mimeType: 'image/png' };
+    },
   };
 }

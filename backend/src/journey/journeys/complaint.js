@@ -85,7 +85,18 @@ async function finishComplaint(ctx, media) {
     description: s.state.description,
   });
   if (media) {
-    await ctx.store.addAttachment(c.id, { url: media.url || null, waMediaId: media.id, kind: 'image' });
+    // Download the WhatsApp image once and store it as a data URL so it is viewable in the panel
+    // (and survives WhatsApp's media-URL expiry). For higher volume, swap to object storage.
+    let url = media.url || null;
+    try {
+      if (media.id && ctx.adapter && typeof ctx.adapter.downloadMedia === 'function') {
+        const { buffer, mimeType } = await ctx.adapter.downloadMedia(media.id);
+        url = `data:${mimeType};base64,${buffer.toString('base64')}`;
+      }
+    } catch (e) {
+      /* keep the waMediaId; the image can be fetched later */
+    }
+    await ctx.store.addAttachment(c.id, { url, waMediaId: media.id, kind: 'image' });
   }
   ctx.say('complaint_created', { vars: { no: c.humanNo, team: team.name, eta: etaMin } });
   ctx.endSession();

@@ -62,6 +62,8 @@ async function feedbackReminders(store, adapter, now) {
     const patient = await store.getPatient(c.waPhone);
     await notifyPatient(store, adapter, { waPhone: c.waPhone, lang: patient?.lang || 'en', key: 'feedback_reminder', vars: { no: c.humanNo }, meta: { caseId: c.id } });
     await store.addCaseEvent(c.id, { actor: 'system', type: 'feedback_reminder', payload: {} });
+    // mark so the patient's 1-10 reply is captured as a rating
+    await store.saveSession({ waPhone: c.waPhone, journey: 'root', step: 'awaiting_feedback', lang: patient?.lang || 'en', state: { caseId: c.id }, lastActivityAt: now, expiresAt: now + 3 * 60 * 60 * 1000 * 24 });
     n++;
   }
   return n;

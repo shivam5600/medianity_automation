@@ -3,9 +3,9 @@
 
 import { signToken, verifyToken, verifyPassword } from './auth.js';
 import { computeMetrics } from './metrics.js';
-import { setStatus, isSlaBreached } from '../services/cases.js';
-import { adminSendUpdate, sendAgentMessage } from '../services/messaging.js';
-import { confirmBooking, cancelBooking } from '../services/booking.js';
+import { setStatus, isSlaBreached, isOpen } from '../services/cases.js';
+import { adminSendUpdate, sendAgentMessage, notifyPatient } from '../services/messaging.js';
+import { confirmBooking, cancelBooking, rescheduleBooking, markVisited, markNoShow } from '../services/booking.js';
 
 const NOTIFY_KEY = { assigned: 'status_assigned', in_progress: 'status_on_the_way', resolved: 'status_resolved' };
 
@@ -64,6 +64,7 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
     if (body?.notify && NOTIFY_KEY[status]) {
       await adminSendUpdate(store, adapter, { caseId: c.id, key: NOTIFY_KEY[status], actor: user.name });
     }
+    if (status === 'resolved' && body?.notify) await markAwaitingFeedback(store, c); // next 1-10 reply = rating
     return { status: 200, json: await enrich(store, await store.getCase(c.id), true) };
   }
 
@@ -120,10 +121,88 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
     const b = await store.getBooking(seg[2]);
     if (!b) return { status: 404, json: { error: 'not found' } };
     await cancelBooking(store, b.id);
+    if (b.caseId) await store.addCaseEvent(b.caseId, { actor: user.name, type: 'cancelled', payload: {} });
     return { status: 200, json: await enrichBooking(store, await store.getBooking(b.id)) };
   }
 
+  // booking detail (with the linked case's full activity trail)
+  if (seg[1] === 'bookings' && seg.length === 3 && method === 'GET') {
+    const b = await store.getBooking(seg[2]);
+    if (!b) return { status: 404, json: { error: 'not found' } };
+    const out = await enrichBooking(store, b);
+    out.events = b.caseId ? await store.listCaseEvents(b.caseId) : [];
+    return { status: 200, json: out };
+  }
+
+  if (seg[1] === 'bookings' && seg[3] === 'reschedule' && method === 'POST') {
+    const b = await store.getBooking(seg[2]);
+    if (!b) return { status: 404, json: { error: 'not found' } };
+    if (!body?.slotId) return { status: 400, json: { error: 'slotId required' } };
+    let updated;
+    try {
+      updated = await rescheduleBooking(store, b.id, body.slotId);
+    } catch (e) {
+      return { status: 409, json: { error: 'that slot is no longer available' } };
+    }
+    if (b.caseId) await store.addCaseEvent(b.caseId, { actor: user.name, type: 'rescheduled', payload: { slotId: body.slotId } });
+    if (body?.notify && b.caseId) {
+      const doctor = await store.getDoctor(updated.doctorId);
+      const slot = await store.getSlot(updated.slotId);
+      await adminSendUpdate(store, adapter, { caseId: b.caseId, key: 'booking_confirmed', actor: user.name, extraVars: { doctor: doctor?.name || '', slot: slot?.label || '' } });
+    }
+    return { status: 200, json: await enrichBooking(store, updated) };
+  }
+
+  if (seg[1] === 'bookings' && (seg[3] === 'visited' || seg[3] === 'no_show') && method === 'POST') {
+    const b = await store.getBooking(seg[2]);
+    if (!b) return { status: 404, json: { error: 'not found' } };
+    const updated = seg[3] === 'visited' ? await markVisited(store, b.id) : await markNoShow(store, b.id);
+    if (b.caseId) await store.addCaseEvent(b.caseId, { actor: user.name, type: seg[3], payload: {} });
+    return { status: 200, json: await enrichBooking(store, updated) };
+  }
+
+  if (seg[1] === 'bookings' && seg[3] === 'remind' && method === 'POST') {
+    const b = await store.getBooking(seg[2]);
+    if (!b || !b.caseId) return { status: 404, json: { error: 'not found' } };
+    const c = await store.getCase(b.caseId);
+    const patient = await store.getPatient(c.waPhone);
+    const doctor = await store.getDoctor(b.doctorId);
+    const slot = await store.getSlot(b.slotId);
+    await notifyPatient(store, adapter, { waPhone: c.waPhone, lang: patient?.lang || 'en', key: 'appointment_reminder', vars: { doctor: doctor?.name || '', slot: slot?.label || '' }, meta: { caseId: c.id } });
+    await store.addCaseEvent(c.id, { actor: user.name, type: 'reminder_sent', payload: {} });
+    return { status: 200, json: { sent: true } };
+  }
+
+  // open slots for a doctor (reschedule picker)
+  if (seg[1] === 'slots' && method === 'GET') {
+    if (!query.doctorId) return { status: 400, json: { error: 'doctorId required' } };
+    return { status: 200, json: await store.listOpenSlots(query.doctorId) };
+  }
+
+  // CSV export of the visible cases
+  if (path === '/api/export/cases.csv' && method === 'GET') {
+    const rows = await Promise.all((await visibleCases(store, user)).map((c) => enrich(store, c, false)));
+    return { status: 200, text: casesToCsv(rows), contentType: 'text/csv' };
+  }
+
   return { status: 404, json: { error: 'no such route' } };
+}
+
+async function markAwaitingFeedback(store, c) {
+  const patient = await store.getPatient(c.waPhone);
+  const now = Date.now();
+  await store.saveSession({ waPhone: c.waPhone, journey: 'root', step: 'awaiting_feedback', lang: patient?.lang || 'en', state: { caseId: c.id }, lastActivityAt: now, expiresAt: now + 3 * 86400000 });
+}
+
+function casesToCsv(rows) {
+  const cols = ['humanNo', 'type', 'categoryName', 'status', 'patientName', 'patientPhone', 'roomBed', 'teamName', 'etaMin', 'rating', 'createdAt', 'resolvedAt'];
+  const cell = (v) => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const head = cols.join(',');
+  const body = rows.map((r) => cols.map((c) => cell(c === 'createdAt' || c === 'resolvedAt' ? (r[c] ? new Date(r[c]).toISOString() : '') : r[c])).join(',')).join('\n');
+  return head + '\n' + body;
 }
 
 // ---- helpers ----

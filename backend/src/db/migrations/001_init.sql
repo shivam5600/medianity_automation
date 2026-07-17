@@ -111,8 +111,13 @@ CREATE TABLE IF NOT EXISTS bookings (
   status          TEXT,
   hold_expires_at BIGINT,
   cancel_reason   TEXT,
+  visited_at      BIGINT,
+  is_revisit      BOOLEAN DEFAULT FALSE,
   created_at      BIGINT
 );
+-- lifecycle columns for existing databases (idempotent)
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS visited_at BIGINT;
+ALTER TABLE bookings ADD COLUMN IF NOT EXISTS is_revisit BOOLEAN DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS messages (
   id           BIGSERIAL PRIMARY KEY,

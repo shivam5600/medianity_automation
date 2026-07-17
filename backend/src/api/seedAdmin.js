@@ -20,7 +20,9 @@ export async function seedDemo(store) {
   const P = (waPhone, name, lang = 'en') => store.upsertPatient({ waPhone, name, lang });
 
   const p1 = await P('+919990000001', 'Ramesh Kumar');
-  await createComplaintCase(store, { patient: p1, categoryId: 'cleanliness', roomBed: '204', description: 'Bed sheet is dirty' });
+  const { case: c1 } = await createComplaintCase(store, { patient: p1, categoryId: 'cleanliness', roomBed: '204', description: 'Bed sheet is dirty' });
+  // a sample attached photo (tiny data URL) to demonstrate image display in the panel
+  await store.addAttachment(c1.id, { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', waMediaId: 'demo', kind: 'image' });
 
   const p2 = await P('+919990000002', 'Sunita Devi', 'hi');
   const { case: c2 } = await createComplaintCase(store, { patient: p2, categoryId: 'ac_electrical', roomBed: '310', description: 'AC not cooling' });

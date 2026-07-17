@@ -41,6 +41,15 @@ export async function computeMetrics(store, { from = null, to = null } = {}) {
   }
   const daily = Object.entries(days).sort().map(([date, v]) => ({ date, created: v.created, resolved: v.resolved }));
 
+  // ---- funnel: lead -> booked -> visited -> revisit ----
+  const rangeBookings = bookings.filter((b) => inRange(b.createdAt));
+  const funnel = {
+    leads: leads.length,
+    booked: rangeBookings.filter((b) => ['confirmed', 'visited', 'no_show'].includes(b.status)).length,
+    visited: rangeBookings.filter((b) => b.status === 'visited').length,
+    revisit: rangeBookings.filter((b) => b.status === 'visited' && b.isRevisit).length,
+  };
+
   const byTeam = teams.map((t) => {
     const tc = cases.filter((c) => c.teamId === t.id);
     return {
@@ -89,6 +98,7 @@ export async function computeMetrics(store, { from = null, to = null } = {}) {
     typeCounts,
     daily,
     byTeam,
+    funnel,
     alerts: { sla: slaAlerts, bookings: pendingBookingAlerts, support: supportAlerts },
   };
 }

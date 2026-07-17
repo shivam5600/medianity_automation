@@ -5,7 +5,7 @@
 
 import { resolveChoice, advance } from '../helpers.js';
 import { createAppointmentCase } from '../../services/cases.js';
-import { holdSlot, SlotUnavailableError } from '../../services/booking.js';
+import { holdSlot, SlotUnavailableError, isRevisitPatient } from '../../services/booking.js';
 
 const appointment = {
   firstStep: 'department',
@@ -92,7 +92,8 @@ async function finishBooking(ctx) {
   }
 
   const c = await createAppointmentCase(ctx.store, { patient, doctor });
-  await ctx.store.updateBooking(booking.id, { caseId: c.id });
+  const revisit = await isRevisitPatient(ctx.store, patient.id, booking.id);
+  await ctx.store.updateBooking(booking.id, { caseId: c.id, isRevisit: revisit });
   await ctx.store.updateCase(c.id, { bookingId: booking.id });
   ctx.say('appt_booking_pending', { vars: { no: c.humanNo, doctor: doctor.name, slot: slot.label } });
   ctx.endSession();

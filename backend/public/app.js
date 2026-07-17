@@ -6,7 +6,9 @@ const S = {
   user: JSON.parse(localStorage.getItem('mc_user') || 'null'),
   view: 'dashboard',
   range: localStorage.getItem('mc_range') || '30d',
-  filters: { status: '', type: '' },
+  customFrom: '',
+  customTo: '',
+  filters: { status: '', type: '', sla: false, q: '' },
   metrics: null,
 };
 const app = () => document.getElementById('app');
@@ -34,6 +36,8 @@ const P = {
   pie: '<path d="M21.2 15.9A10 10 0 1 1 8 2.8"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>',
   check: '<path d="M22 11v1a10 10 0 1 1-5.9-9.1"/><path d="m22 4-10 10-3-3"/>',
   chart: '<path d="M3 3v18h18"/><rect x="7" y="10" width="3" height="7" rx="1"/><rect x="12" y="6" width="3" height="11" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[name] || ''}</svg>`;
 
@@ -143,6 +147,12 @@ const page = () => document.getElementById('page');
 const RANGES = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days', all: 'All time' };
 function rangeQuery() {
   if (S.range === 'all') return '';
+  if (S.range === 'custom') {
+    if (!S.customFrom || !S.customTo) return '';
+    const from = new Date(S.customFrom).getTime();
+    const to = new Date(S.customTo).getTime() + 86399000; // include the whole end day
+    return `from=${from}&to=${to}`;
+  }
   const days = { '7d': 7, '30d': 30, '90d': 90 }[S.range] || 30;
   const to = Date.now();
   const from = to - days * 86400000;
@@ -154,35 +164,83 @@ function viewDashboard() {
   const m = S.metrics;
   const k = m?.kpis || {};
   const cards = [
-    ['leads', 'Leads', k.leads, 'users', ''],
-    ['open', 'Open tickets', k.openTickets, 'ticket', ''],
-    ['resolved', 'Resolved', k.resolved, 'check', ''],
-    ['bookings', 'Pending bookings', k.pendingBookings, 'calendar', k.pendingBookings ? 'warn' : ''],
-    ['sla', 'SLA breaches', k.slaBreaches, 'alert', k.slaBreaches ? 'alert' : ''],
-    ['support', 'Support handoffs', k.supportHandoffs, 'headset', ''],
-    ['rating', 'Avg rating', k.avgRating == null ? '·' : k.avgRating, 'star', ''],
-    ['res', 'Avg resolution', k.avgResolutionMin == null ? '·' : k.avgResolutionMin + 'm', 'clock', ''],
+    ['Leads', k.leads, 'users', '', { view: 'tickets', type: 'enquiry' }],
+    ['Open tickets', k.openTickets, 'ticket', '', { view: 'tickets', type: 'complaint' }],
+    ['Resolved', k.resolved, 'check', '', { view: 'tickets', status: 'resolved' }],
+    ['Pending bookings', k.pendingBookings, 'calendar', k.pendingBookings ? 'warn' : '', { view: 'bookings' }],
+    ['SLA breaches', k.slaBreaches, 'alert', k.slaBreaches ? 'alert' : '', { view: 'tickets', sla: true }],
+    ['Support handoffs', k.supportHandoffs, 'headset', '', { view: 'tickets', type: 'support' }],
+    ['Avg rating', k.avgRating == null ? '·' : k.avgRating + ' /10', 'star', '', null],
+    ['Avg resolution', k.avgResolutionMin == null ? '·' : k.avgResolutionMin + 'm', 'clock', '', null],
   ];
+  const rangeLabel = S.range === 'custom' ? (S.customFrom && S.customTo ? `${S.customFrom} to ${S.customTo}` : 'Custom range') : RANGES[S.range];
   page().innerHTML = `
     <div class="pagehead">
-      <div><h1>Dashboard</h1><div class="sub">${RANGES[S.range]} · live from WhatsApp</div></div>
-      <div class="rangebar">${Object.entries(RANGES).map(([k2, l]) => `<button data-r="${k2}" class="${S.range === k2 ? 'active' : ''}">${l.replace('Last ', '')}</button>`).join('')}</div>
+      <div><h1>Dashboard</h1><div class="sub">${esc(rangeLabel)} · live from WhatsApp</div></div>
+      <div class="rangebar">
+        ${['7d', '30d', '90d', 'all'].map((r) => `<button data-r="${r}" class="${S.range === r ? 'active' : ''}">${RANGES[r].replace('Last ', '')}</button>`).join('')}
+        <button data-r="custom" class="${S.range === 'custom' ? 'active' : ''}">Custom</button>
+        ${S.range === 'custom' ? `<input type="date" class="date" id="cFrom" value="${S.customFrom}" /><input type="date" class="date" id="cTo" value="${S.customTo}" /><button class="btn sm" id="cApply">Apply</button>` : ''}
+      </div>
     </div>
     <div class="main">
       <div class="kpis">
-        ${cards.map(([id, l, n, ic, cls]) => `<div class="kpi ${cls}"><div class="ic">${icon(ic)}</div><div><div class="n">${n ?? 0}</div><div class="l">${l}</div></div></div>`).join('')}
+        ${cards.map(([l, n, ic, cls, nav]) => `<div class="kpi ${cls} ${nav ? 'clickable' : ''}" ${nav ? `data-goto='${esc(JSON.stringify(nav))}'` : ''}><div class="ic">${icon(ic)}</div><div><div class="n">${n ?? 0}</div><div class="l">${l}</div></div></div>`).join('')}
       </div>
       ${alertsPanel(m?.alerts)}
       <div class="grid2">
         <div class="panel"><h3>${icon('trend')} Ticket volume</h3><div class="body">${lineChart(m?.daily || [])}</div></div>
         <div class="panel"><h3>${icon('pie')} Status mix</h3><div class="body">${donut(m?.statusCounts || {})}</div></div>
       </div>
-      <div class="panel"><h3>${icon('chart')} By team</h3><div class="body">${teamBars(m?.byTeam || [])}</div></div>
+      <div class="grid2 even">
+        <div class="panel"><h3>${icon('trend')} Patient funnel</h3><div class="body">${funnelChart(m?.funnel)}</div></div>
+        <div class="panel"><h3>${icon('chart')} By team</h3><div class="body">${teamBars(m?.byTeam || [])}</div></div>
+      </div>
     </div>`;
-  page().querySelectorAll('.rangebar button').forEach((b) =>
-    b.addEventListener('click', async () => { S.range = b.dataset.r; localStorage.setItem('mc_range', S.range); S.metrics = await api('/api/metrics?' + rangeQuery()); renderShell(); }),
+  page().querySelectorAll('.rangebar button[data-r]').forEach((b) =>
+    b.addEventListener('click', async () => {
+      const r = b.dataset.r;
+      localStorage.setItem('mc_range', r);
+      if (r === 'custom') { S.range = 'custom'; return viewDashboard(); }
+      S.range = r;
+      S.metrics = await api('/api/metrics?' + rangeQuery());
+      renderShell();
+    }),
+  );
+  const applyBtn = page().querySelector('#cApply');
+  if (applyBtn) applyBtn.addEventListener('click', async () => {
+    S.customFrom = page().querySelector('#cFrom').value;
+    S.customTo = page().querySelector('#cTo').value;
+    if (!S.customFrom || !S.customTo) return;
+    S.metrics = await api('/api/metrics?' + rangeQuery());
+    renderShell();
+  });
+  page().querySelectorAll('.kpi.clickable').forEach((el) =>
+    el.addEventListener('click', () => {
+      const nav = JSON.parse(el.dataset.goto);
+      S.view = nav.view;
+      if (nav.view === 'tickets') S.filters = { status: nav.status || '', type: nav.type || '', sla: !!nav.sla, q: '' };
+      renderShell();
+    }),
   );
   wireAlerts();
+}
+
+function funnelChart(f) {
+  if (!f) return `<div class="empty">No data.</div>`;
+  const stages = [
+    ['Leads', f.leads, 'var(--c-blue)'],
+    ['Booked', f.booked, 'var(--c-teal)'],
+    ['Visited', f.visited, 'var(--c-green)'],
+    ['Revisit', f.revisit, 'var(--c-indigo)'],
+  ];
+  const max = Math.max(1, ...stages.map(([, v]) => v));
+  return `<div class="funnel">${stages.map(([name, val, col], i) => {
+    const w = Math.max(4, (val / max) * 100);
+    const prev = i ? stages[i - 1][1] : null;
+    const conv = prev ? Math.round((val / (prev || 1)) * 100) + '%' : '';
+    return `<div class="funnel-row"><div class="name">${name}</div><div class="funnel-track"><div class="funnel-fill" style="width:${w}%;background:${col}">${val}</div></div><div class="conv">${conv}</div></div>`;
+  }).join('')}</div>`;
 }
 
 function alertsPanel(a) {
@@ -275,23 +333,37 @@ function teamBars(rows) {
 /* ---------------- tickets ---------------- */
 async function viewTickets() {
   page().innerHTML = `
-    <div class="pagehead"><div><h1>Tickets</h1><div class="sub">Complaints, appointments and support</div></div></div>
+    <div class="pagehead">
+      <div><h1>Tickets</h1><div class="sub">Complaints, appointments and support</div></div>
+      <button class="btn ghost sm" id="exportBtn">${icon('download', 'sm')} Export CSV</button>
+    </div>
     <div class="main">
       <div class="filters">
+        <div class="searchbox">${icon('search', 'sm')}<input id="fq" placeholder="Search tickets..." value="${esc(S.filters.q || '')}" autocomplete="off" /></div>
         <select id="fStatus"><option value="">All statuses</option>${['new', 'assigned', 'in_progress', 'resolved', 'closed'].map((s) => `<option ${S.filters.status === s ? 'selected' : ''} value="${s}">${label(s)}</option>`).join('')}</select>
         <select id="fType"><option value="">All types</option>${['complaint', 'enquiry', 'support'].map((s) => `<option ${S.filters.type === s ? 'selected' : ''} value="${s}">${label(s)}</option>`).join('')}</select>
+        ${S.filters.sla ? `<button class="btn ghost sm" id="clearSla"><span class="badge b-sla">SLA only</span> ✕</button>` : ''}
       </div>
       <div id="cards"><div class="empty">Loading…</div></div>
     </div>`;
   document.getElementById('fStatus').addEventListener('change', (e) => { S.filters.status = e.target.value; loadTickets(); });
   document.getElementById('fType').addEventListener('change', (e) => { S.filters.type = e.target.value; loadTickets(); });
+  document.getElementById('fq').addEventListener('input', (e) => { S.filters.q = e.target.value; loadTickets(); });
+  const cs = document.getElementById('clearSla');
+  if (cs) cs.addEventListener('click', () => { S.filters.sla = false; viewTickets(); });
+  document.getElementById('exportBtn').addEventListener('click', exportCsv);
   loadTickets();
 }
 async function loadTickets() {
   const q = new URLSearchParams();
   if (S.filters.status) q.set('status', S.filters.status);
   if (S.filters.type) q.set('type', S.filters.type);
-  const cases = await api('/api/cases?' + q.toString());
+  let cases = await api('/api/cases?' + q.toString());
+  if (S.filters.sla) cases = cases.filter((c) => c.slaBreached);
+  if (S.filters.q) {
+    const qq = S.filters.q.toLowerCase();
+    cases = cases.filter((c) => [c.humanNo, c.patientName, c.description, c.categoryName, c.roomBed, c.teamName].some((v) => String(v || '').toLowerCase().includes(qq)));
+  }
   const el = document.getElementById('cards');
   if (!cases.length) return (el.innerHTML = `<div class="empty">No tickets match.</div>`);
   el.className = 'cards';
@@ -338,9 +410,9 @@ async function openCase(id) {
           <div class="k">Status</div><div><span class="badge b-${c.status}">${label(c.status)}</span> ${c.slaBreached ? '<span class="badge b-sla">SLA breached</span>' : ''}</div>
           ${c.etaMin ? `<div class="k">ETA</div><div>${c.etaMin} min</div>` : ''}
           <div class="k">Description</div><div>${esc(c.description || '·')}</div>
-          ${photo ? `<div class="k">Photo</div><div>${photo.url ? `<a href="${esc(photo.url)}" target="_blank">view</a>` : 'attached (media ' + esc(photo.waMediaId) + ')'}</div>` : ''}
-          ${c.booking ? `<div class="k">Booking</div><div>${esc(c.booking.doctorName)}, ${esc(c.booking.slotLabel)} · <span class="badge b-${c.booking.status === 'confirmed' ? 'resolved' : 'assigned'}">${esc(c.booking.status)}</span></div>` : ''}
-          ${c.rating ? `<div class="k">Rating</div><div>${c.rating} / 5</div>` : ''}
+          ${photo && photo.url ? `<div class="k">Photo</div><div><a href="${esc(photo.url)}" target="_blank"><img class="attach" src="${esc(photo.url)}" alt="complaint photo" /></a></div>` : photo ? `<div class="k">Photo</div><div>attached (media ${esc(photo.waMediaId)})</div>` : ''}
+          ${c.booking ? `<div class="k">Booking</div><div>${esc(c.booking.doctorName)}, ${esc(c.booking.slotLabel)} · <span class="badge b-${c.booking.status === 'confirmed' || c.booking.status === 'visited' ? 'resolved' : 'assigned'}">${esc(c.booking.status)}</span></div>` : ''}
+          ${c.rating ? `<div class="k">Rating</div><div><b>${c.rating}</b> / 10</div>` : ''}
         </div>
         <div class="section-title">History</div>
         <div class="timeline">${evRows || '<div class="ev t">No history yet.</div>'}</div>
@@ -386,20 +458,102 @@ function refreshCurrent() {
 }
 
 /* ---------------- bookings ---------------- */
+const bookingBadge = (s) => ({ held: 'assigned', pending: 'assigned', confirmed: 'new', visited: 'resolved', cancelled: 'closed', no_show: 'sla' }[s] || 'closed');
+
 async function viewBookings() {
-  page().innerHTML = `<div class="pagehead"><div><h1>Bookings</h1><div class="sub">Confirm or cancel held appointment slots</div></div></div>
+  page().innerHTML = `<div class="pagehead"><div><h1>Bookings</h1><div class="sub">Confirm, reschedule, mark visited, cancel or remind</div></div></div>
     <div class="main"><div class="panel table-scroll" id="bk"><div class="empty">Loading…</div></div></div>`;
   const rows = await api('/api/bookings');
   const bk = document.getElementById('bk');
   if (!rows.length) return (bk.innerHTML = `<div class="empty">No bookings yet.</div>`);
   bk.innerHTML = `<table><thead><tr><th>Patient</th><th>Doctor</th><th>Slot</th><th>Status</th><th></th></tr></thead><tbody>
-    ${rows.map((b) => `<tr>
-      <td>${esc(b.patientName || '·')}</td><td>${esc(b.doctorName)}</td><td>${esc(b.slotLabel)}</td>
-      <td><span class="badge b-${b.status === 'confirmed' ? 'resolved' : b.status === 'cancelled' ? 'closed' : 'assigned'}">${esc(b.status)}</span></td>
-      <td style="text-align:right">${['held', 'pending'].includes(b.status) ? `<button class="btn sm" data-c="${esc(b.id)}">${icon('check', 'sm')} Confirm</button> <button class="btn ghost sm" data-x="${esc(b.id)}">Cancel</button>` : ''}</td>
+    ${rows.map((b) => `<tr class="click" data-id="${esc(b.id)}">
+      <td>${esc(b.patientName || '·')} ${b.isRevisit ? '<span class="badge b-type">revisit</span>' : ''}</td>
+      <td>${esc(b.doctorName)}</td><td>${esc(b.slotLabel)}</td>
+      <td><span class="badge b-${bookingBadge(b.status)}">${esc(b.status)}</span></td>
+      <td style="text-align:right;color:var(--muted);font-size:12px">Open &rsaquo;</td>
     </tr>`).join('')}</tbody></table>`;
-  bk.querySelectorAll('[data-c]').forEach((btn) => btn.addEventListener('click', async () => { await api('/api/bookings/' + btn.dataset.c + '/confirm', { method: 'POST', body: { notify: true } }); toast('Booking confirmed · patient notified'); viewBookings(); }));
-  bk.querySelectorAll('[data-x]').forEach((btn) => btn.addEventListener('click', async () => { await api('/api/bookings/' + btn.dataset.x + '/cancel', { method: 'POST', body: {} }); toast('Booking cancelled'); viewBookings(); }));
+  bk.querySelectorAll('tr.click').forEach((tr) => tr.addEventListener('click', () => openBooking(tr.dataset.id)));
+}
+
+async function openBooking(id) {
+  const b = await api('/api/bookings/' + id);
+  const evRows = (b.events || []).slice().reverse().map((e) => `<div class="ev"><span class="t">${fmt(e.at)}</span> · ${esc(e.type)} <span class="t">(${esc(e.actor)})</span></div>`).join('');
+  const active = ['held', 'pending', 'confirmed'].includes(b.status);
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <header><h3>Booking · ${esc(b.doctorName)}</h3><button class="x">${icon('x')}</button></header>
+      <div class="body">
+        <div class="kv">
+          <div class="k">Patient</div><div>${esc(b.patientName || '·')} ${b.isRevisit ? '<span class="badge b-type">revisit</span>' : ''}</div>
+          <div class="k">Doctor</div><div>${esc(b.doctorName)}</div>
+          <div class="k">Slot</div><div>${esc(b.slotLabel)}</div>
+          <div class="k">Status</div><div><span class="badge b-${bookingBadge(b.status)}">${esc(b.status)}</span></div>
+          ${b.visitedAt ? `<div class="k">Visited</div><div>${fmt(b.visitedAt)}</div>` : ''}
+        </div>
+        <div class="section-title">Activity</div>
+        <div class="timeline">${evRows || '<div class="ev t">No activity yet.</div>'}</div>
+        <div id="reschedRow"></div>
+        <div class="actions">
+          ${['held', 'pending'].includes(b.status) ? `<button class="btn sm" data-a="confirm">${icon('check', 'sm')} Confirm</button>` : ''}
+          ${b.status === 'confirmed' ? `<button class="btn ghost sm" data-a="visited">Mark visited</button><button class="btn ghost sm" data-a="no_show">No-show</button>` : ''}
+          ${active ? `<button class="btn ghost sm" data-a="reschedule">Reschedule</button>` : ''}
+          ${active ? `<button class="btn ghost sm" data-a="remind">${icon('bell', 'sm')} Send reminder</button>` : ''}
+          ${active ? `<button class="btn ghost sm" data-a="cancel">Cancel</button>` : ''}
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  const refresh = () => { close(); viewBookings(); };
+  overlay.querySelector('.x').addEventListener('click', close);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  const post = (act, body = {}) => api('/api/bookings/' + id + '/' + act, { method: 'POST', body });
+  overlay.querySelectorAll('[data-a]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      const a = btn.dataset.a;
+      if (a === 'confirm') { await post('confirm', { notify: true }); toast('Booking confirmed · patient notified'); refresh(); }
+      else if (a === 'cancel') { await post('cancel'); toast('Booking cancelled'); refresh(); }
+      else if (a === 'visited') { await post('visited'); toast('Marked visited'); refresh(); }
+      else if (a === 'no_show') { await post('no_show'); toast('Marked no-show'); refresh(); }
+      else if (a === 'remind') { await post('remind'); toast('Reminder sent to patient'); }
+      else if (a === 'reschedule') showReschedule(overlay, b, id, refresh);
+    }),
+  );
+}
+
+async function showReschedule(overlay, b, id, refresh) {
+  const row = overlay.querySelector('#reschedRow');
+  row.innerHTML = `<div class="section-title">Pick a new slot</div><div id="slotOpts">Loading…</div>`;
+  const slots = await api('/api/slots?doctorId=' + encodeURIComponent(b.doctorId));
+  const opts = overlay.querySelector('#slotOpts');
+  if (!slots.length) return (opts.innerHTML = `<div class="ev t">No open slots for this doctor.</div>`);
+  opts.innerHTML = slots.map((s) => `<button class="btn ghost sm" data-slot="${esc(s.id)}" style="margin:0 6px 6px 0">${esc(s.label)}</button>`).join('');
+  opts.querySelectorAll('[data-slot]').forEach((btn) =>
+    btn.addEventListener('click', async () => {
+      try {
+        await api('/api/bookings/' + id + '/reschedule', { method: 'POST', body: { slotId: btn.dataset.slot, notify: true } });
+        toast('Rescheduled · patient notified');
+        refresh();
+      } catch (e) {
+        toast(e.message);
+      }
+    }),
+  );
+}
+
+async function exportCsv() {
+  const res = await fetch(API_BASE + '/api/export/cases.csv', { headers: { Authorization: 'Bearer ' + S.token } });
+  const text = await res.text();
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'medinity-tickets.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Exported CSV');
 }
 
 /* ---------------- utils ---------------- */

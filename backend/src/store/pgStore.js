@@ -19,11 +19,11 @@ const toSlot = (r) => (r ? { id: r.id, doctorId: r.doctor_id, label: r.label, st
 const toCase = (r) => (r ? { id: String(r.id), humanNo: r.human_no, type: r.type, categoryId: r.category_id, patientId: r.patient_wa, waPhone: r.patient_wa, teamId: r.team_id, assigneeId: r.assignee_id, status: r.status, roomBed: r.room_bed, description: r.description, etaMin: r.eta_min, etaAt: numOrNull(r.eta_at), slaDueAt: numOrNull(r.sla_due_at), rating: r.rating, feedback: r.feedback, bookingId: idOrNull(r.booking_id), createdAt: numOrNull(r.created_at), resolvedAt: numOrNull(r.resolved_at) } : null);
 const toEvent = (r) => ({ id: String(r.id), caseId: String(r.case_id), actor: r.actor, type: r.type, payload: r.payload || {}, at: numOrNull(r.at) });
 const toAttachment = (r) => ({ id: String(r.id), caseId: String(r.case_id), url: r.url, waMediaId: r.wa_media_id, kind: r.kind, at: numOrNull(r.at) });
-const toBooking = (r) => (r ? { id: String(r.id), slotId: r.slot_id, doctorId: r.doctor_id, patientId: r.patient_wa, caseId: idOrNull(r.case_id), status: r.status, holdExpiresAt: numOrNull(r.hold_expires_at), cancelReason: r.cancel_reason, createdAt: numOrNull(r.created_at) } : null);
+const toBooking = (r) => (r ? { id: String(r.id), slotId: r.slot_id, doctorId: r.doctor_id, patientId: r.patient_wa, caseId: idOrNull(r.case_id), status: r.status, holdExpiresAt: numOrNull(r.hold_expires_at), cancelReason: r.cancel_reason, visitedAt: numOrNull(r.visited_at), isRevisit: r.is_revisit === true, createdAt: numOrNull(r.created_at) } : null);
 const toMessage = (r) => ({ id: String(r.id), waPhone: r.wa_phone, direction: r.direction, body: r.body, replyId: r.reply_id, templateKey: r.template_key, agent: r.agent, caseId: idOrNull(r.case_id), at: numOrNull(r.at) });
 
 const CASE_COLS = { status: 'status', resolvedAt: 'resolved_at', rating: 'rating', feedback: 'feedback', assigneeId: 'assignee_id', bookingId: 'booking_id', teamId: 'team_id', etaAt: 'eta_at', slaDueAt: 'sla_due_at', roomBed: 'room_bed', description: 'description' };
-const BOOKING_COLS = { status: 'status', caseId: 'case_id', cancelReason: 'cancel_reason' };
+const BOOKING_COLS = { status: 'status', caseId: 'case_id', cancelReason: 'cancel_reason', visitedAt: 'visited_at', isRevisit: 'is_revisit', slotId: 'slot_id', doctorId: 'doctor_id' };
 const ACTIVE = "('held','pending','confirmed')";
 
 export async function createPgStore(connectionString) {
@@ -244,6 +244,33 @@ export async function createPgStore(connectionString) {
     async getBooking(id) {
       const { rows } = await q('SELECT * FROM bookings WHERE id=$1', [id]);
       return toBooking(rows[0]);
+    },
+    async rescheduleBooking(bookingId, newSlotId) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const bRes = await client.query('SELECT * FROM bookings WHERE id=$1', [bookingId]);
+        const b = bRes.rows[0];
+        if (!b) { await client.query('ROLLBACK'); return null; }
+        const sRes = await client.query('SELECT * FROM slots WHERE id=$1 FOR UPDATE', [newSlotId]);
+        const ns = sRes.rows[0];
+        if (!ns || ns.status !== 'open' || ns.booked_count >= ns.capacity) {
+          await client.query('ROLLBACK');
+          throw new SlotUnavailableError(`Slot ${newSlotId} is not available`);
+        }
+        const nc = ns.booked_count + 1;
+        await client.query('UPDATE slots SET booked_count=$1, status=$2 WHERE id=$3', [nc, nc >= ns.capacity ? 'full' : 'open', newSlotId]);
+        await client.query('UPDATE bookings SET slot_id=$1, doctor_id=$2 WHERE id=$3', [newSlotId, ns.doctor_id, bookingId]);
+        await recomputeSlot(client, b.slot_id); // free the old slot
+        const out = await client.query('SELECT * FROM bookings WHERE id=$1', [bookingId]);
+        await client.query('COMMIT');
+        return toBooking(out.rows[0]);
+      } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw e;
+      } finally {
+        client.release();
+      }
     },
     async updateBooking(id, patch) {
       const sets = [];

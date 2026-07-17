@@ -19,7 +19,16 @@
 import { t, hasKey } from '../i18n.js';
 import { JOURNEYS } from './index.js';
 import { SESSION_TTL_MS } from './helpers.js';
-import { createSupportCase } from '../services/cases.js';
+import { createSupportCase, recordRating } from '../services/cases.js';
+
+const numericFeedback = (inbound) => {
+  const txt = (inbound.text || '').trim();
+  if (/^\d{1,2}$/.test(txt)) {
+    const n = parseInt(txt, 10);
+    if (n >= 1 && n <= 10) return n;
+  }
+  return null;
+};
 
 const SUPPORT_PHONE = '+91 94540 99331';
 
@@ -74,6 +83,20 @@ export async function handle(deps, inbound) {
 
   let sess = await store.getSession(waPhone);
   const expired = sess && sess.expiresAt && now > sess.expiresAt;
+
+  // Feedback capture: the patient is replying to a 1-10 rating prompt (marker set on resolution).
+  if (sess && !expired && sess.journey === 'root' && sess.step === 'awaiting_feedback') {
+    const fb = numericFeedback(inbound);
+    const ctx = makeCtx(deps, sess, inbound, now);
+    if (fb != null) {
+      if (sess.state?.caseId) await recordRating(store, sess.state.caseId, fb);
+      ctx.say('feedback_thanks');
+      ctx.endSession();
+      return finish(deps, ctx);
+    }
+    await store.deleteSession(waPhone); // not a rating -> drop the marker, treat as a fresh message
+    sess = null;
+  }
 
   if (!sess || expired) {
     sess = await newSession(store, waPhone, now);

@@ -161,9 +161,25 @@ export function createMemoryStore(seed = defaultSeed()) {
       const bookedCount = slot.bookedCount + 1;
       slots.set(slotId, { ...slot, bookedCount, status: bookedCount >= slot.capacity ? 'full' : 'open' });
       const id = nextId('book');
-      const row = { id, slotId, doctorId: slot.doctorId, patientId: patient.id, caseId, status: 'held', holdExpiresAt: now + holdMinutes * 60_000, createdAt: Date.now() };
+      const row = { id, slotId, doctorId: slot.doctorId, patientId: patient.id, caseId, status: 'held', holdExpiresAt: now + holdMinutes * 60_000, visitedAt: null, isRevisit: false, createdAt: Date.now() };
       bookings.set(id, row);
       return row;
+    },
+    // Atomically move a booking to a new open slot (releases the old slot, occupies the new one).
+    async rescheduleBooking(bookingId, newSlotId) {
+      const b = bookings.get(bookingId);
+      if (!b) return null;
+      const newSlot = slots.get(newSlotId);
+      if (!newSlot || newSlot.status !== 'open' || newSlot.bookedCount >= newSlot.capacity) {
+        throw new SlotUnavailableError(`Slot ${newSlotId} is not available`);
+      }
+      const oldSlot = slots.get(b.slotId);
+      if (oldSlot) slots.set(oldSlot.id, { ...oldSlot, bookedCount: Math.max(0, oldSlot.bookedCount - 1), status: 'open' });
+      const nc = newSlot.bookedCount + 1;
+      slots.set(newSlotId, { ...newSlot, bookedCount: nc, status: nc >= newSlot.capacity ? 'full' : 'open' });
+      const updated = { ...b, slotId: newSlotId, doctorId: newSlot.doctorId };
+      bookings.set(bookingId, updated);
+      return updated;
     },
     async getBooking(id) {
       return bookings.get(id) || null;

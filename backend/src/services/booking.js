@@ -19,6 +19,24 @@ export function cancelBooking(store, bookingId, reason = 'cancelled') {
   return store.cancelBooking(bookingId, reason);
 }
 
+export function rescheduleBooking(store, bookingId, newSlotId) {
+  return store.rescheduleBooking(bookingId, newSlotId);
+}
+
+export function markVisited(store, bookingId) {
+  return store.updateBooking(bookingId, { status: 'visited', visitedAt: Date.now() });
+}
+
+export function markNoShow(store, bookingId) {
+  return store.updateBooking(bookingId, { status: 'no_show' });
+}
+
+// A booking is a "revisit" if the patient has any earlier booking that was already visited.
+export async function isRevisitPatient(store, patientId, exceptBookingId = null) {
+  const prior = await store.listBookings();
+  return prior.some((b) => b.patientId === patientId && b.id !== exceptBookingId && b.status === 'visited');
+}
+
 // Frees holds that were never confirmed in time. Run by the scheduler (jobs.js) or an n8n cron.
 export function releaseExpiredHolds(store, now = Date.now()) {
   return store.releaseExpiredHolds(now);
