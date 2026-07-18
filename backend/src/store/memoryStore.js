@@ -10,6 +10,10 @@
 import { defaultSeed, departmentsFrom } from '../data/seed.js';
 import { SlotUnavailableError } from '../errors.js';
 
+// Merge a patch onto a row, ignoring `undefined` keys (mirrors pg COALESCE — a PATCH with unset
+// fields must not overwrite existing values with undefined).
+const merge = (row, patch) => ({ ...row, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) });
+
 export function createMemoryStore(seed = defaultSeed()) {
   const teams = new Map(seed.teams.map((x) => [x.id, x]));
   const categories = new Map(seed.categories.map((x) => [x.id, x]));
@@ -64,7 +68,7 @@ export function createMemoryStore(seed = defaultSeed()) {
     async updatePatient(waPhone, patch) {
       const p = patients.get(waPhone);
       if (!p) return null;
-      const updated = { ...p, ...patch };
+      const updated = merge(p, patch);
       patients.set(waPhone, updated);
       return updated;
     },
@@ -89,7 +93,7 @@ export function createMemoryStore(seed = defaultSeed()) {
     async updateUser(id, patch) {
       const u = users.get(id);
       if (!u) return null;
-      const updated = { ...u, ...patch };
+      const updated = merge(u, patch);
       users.set(id, updated);
       return updated;
     },
@@ -157,7 +161,7 @@ export function createMemoryStore(seed = defaultSeed()) {
     async updateDoctor(id, patch) {
       const d = doctors.get(id);
       if (!d) return null;
-      const updated = { ...d, ...patch };
+      const updated = merge(d, patch);
       doctors.set(id, updated);
       return updated;
     },
@@ -170,7 +174,7 @@ export function createMemoryStore(seed = defaultSeed()) {
     async updateSlot(id, patch) {
       const s = slots.get(id);
       if (!s) return null;
-      const updated = { ...s, ...patch };
+      const updated = merge(s, patch);
       slots.set(id, updated);
       return updated;
     },
@@ -205,7 +209,7 @@ export function createMemoryStore(seed = defaultSeed()) {
     async updateCase(id, patch) {
       const c = cases.get(id);
       if (!c) return null;
-      const updated = { ...c, ...patch };
+      const updated = merge(c, patch);
       cases.set(id, updated);
       return updated;
     },
@@ -264,7 +268,7 @@ export function createMemoryStore(seed = defaultSeed()) {
     async updateBooking(id, patch) {
       const b = bookings.get(id);
       if (!b) return null;
-      const updated = { ...b, ...patch };
+      const updated = merge(b, patch);
       bookings.set(id, updated);
       return updated;
     },

@@ -47,6 +47,10 @@ const P = {
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>',
   back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
   steth: '<path d="M4 3v6a5 5 0 0 0 10 0V3"/><path d="M4 3H2M14 3h-2M9 19a4 4 0 0 0 8 0v-3"/><circle cx="20" cy="12" r="2"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M9.9 4.2A9 9 0 0 1 12 4c6.5 0 10 7 10 7a13 13 0 0 1-2.2 2.9M6.6 6.6A13 13 0 0 0 2 11s3.5 7 10 7a9 9 0 0 0 3.4-.6M3 3l18 18"/>',
+  lock: '<rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  unlock: '<rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
 };
 const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${P[name] || ''}</svg>`;
 
@@ -95,12 +99,23 @@ function renderLogin(err = '') {
         <label>Email</label>
         <input id="login" type="text" autocomplete="username" value="admin@medinity.local" />
         <label>Password</label>
-        <input id="password" type="password" autocomplete="current-password" value="" />
+        <div class="pwwrap"><input id="password" type="password" autocomplete="current-password" value="" /><button type="button" class="eye" id="togglePw" aria-label="Show password">${icon('eye', 'sm')}</button></div>
         <div class="error">${esc(err)}</div>
         <button class="btn full" type="submit">Sign in</button>
-        <div class="hint">Pilot logins · admin@medinity.local / medinity@123 (super admin) · housekeeping@medinity.local / house@123 (team lead).</div>
+        <button type="button" class="forgot" id="forgotBtn">Forgot password?</button>
+        <div class="hint" id="loginHint">Super Admin · admin@medinity.local / medinity@123. Other logins are created and managed by your admin.</div>
       </form>
     </div>`;
+  const pw = document.getElementById('password');
+  document.getElementById('togglePw').addEventListener('click', (e) => {
+    const show = pw.type === 'password';
+    pw.type = show ? 'text' : 'password';
+    e.currentTarget.innerHTML = icon(show ? 'eyeOff' : 'eye', 'sm');
+    pw.focus();
+  });
+  document.getElementById('forgotBtn').addEventListener('click', () => {
+    document.getElementById('loginHint').innerHTML = 'Passwords are reset by your administrator. Please contact your Super Admin or Hospital Admin to unlock your account or reset your password.';
+  });
   document.getElementById('loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
@@ -867,7 +882,7 @@ async function viewStaff() {
     <div class="main"><div class="panel" id="stMain" style="padding:0"><div class="empty">Loading…</div></div></div>`;
   if (admin) document.getElementById('addStaff').addEventListener('click', addStaff);
   const rows = await api('/api/staff');
-  document.getElementById('stMain').innerHTML = rows.map((u) => `<div class="list-row" data-s="${esc(u.id)}" style="grid-template-columns:minmax(0,1fr) auto auto auto auto"><div style="min-width:0"><div class="primary">${esc(u.name)} ${u.onLeave ? '<span class="pill leave">on leave</span>' : ''}</div><div class="secondary">${esc(u.login)} · ${esc(roleLabel(u.role))} · ${esc(u.teamName)}</div></div>${u.avgRating != null ? `<span class="pill">★ ${u.avgRating}/10</span>` : '<span></span>'}<span class="pill">${u.assigned} open</span><span class="pill">${u.resolved} done</span><span class="secondary">${esc(u.hours || '·')}</span></div>`).join('');
+  document.getElementById('stMain').innerHTML = rows.map((u) => `<div class="list-row" data-s="${esc(u.id)}" style="grid-template-columns:minmax(0,1fr) auto auto auto auto"><div style="min-width:0"><div class="primary">${esc(u.name)} ${u.active === false ? '<span class="pill off">🔒 locked</span>' : u.onLeave ? '<span class="pill leave">on leave</span>' : ''}</div><div class="secondary">${esc(u.login)} · ${esc(roleLabel(u.role))} · ${esc(u.teamName)}</div></div>${u.avgRating != null ? `<span class="pill">★ ${u.avgRating}/10</span>` : '<span></span>'}<span class="pill">${u.assigned} open</span><span class="pill">${u.resolved} done</span><span class="secondary">${esc(u.hours || '·')}</span></div>`).join('');
   document.querySelectorAll('#stMain [data-s]').forEach((e) => e.addEventListener('click', () => goDetail('staff', e.dataset.s)));
 }
 async function addStaff() {
@@ -890,21 +905,27 @@ async function staffDetail(id) {
         <div class="k">Role</div><div>${esc(roleLabel(u.role))}</div>
         <div class="k">Team</div><div>${esc(u.teamName)}</div>
         <div class="k">Hours</div><div>${esc(u.hours || '·')}</div>
-        <div class="k">Status</div><div>${u.onLeave ? '<span class="pill leave">on leave</span>' : '<span class="pill">active</span>'}</div>
+        <div class="k">Status</div><div>${u.active === false ? '<span class="pill off">🔒 locked</span>' : u.onLeave ? '<span class="pill leave">on leave</span>' : '<span class="pill">active</span>'}</div>
         <div class="k">Workload</div><div>${u.assigned} open · ${u.resolved} resolved</div>
         <div class="k">Rating</div><div>${u.avgRating != null ? `★ <b>${u.avgRating}</b> / 10` : '·'}</div>
       </div></div></div></div>
-      <div>${admin ? `<div class="panel"><h3>Manage</h3><div class="body">
+      <div>${admin ? `<div class="panel"><h3>Manage account</h3><div class="body">
         <label>Team</label><select id="stTeam">${cfg.teams.map((t) => `<option value="${t.id}" ${u.teamId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
         <label>Working hours</label><input id="stHours" value="${esc(u.hours || '')}" placeholder="09:00-18:00" />
-        <div class="form-actions"><button class="btn sm" id="stSave">Save</button><button class="btn ghost sm" id="stLeave">${u.onLeave ? 'Mark active' : 'Mark on leave'}</button><button class="btn ghost sm" id="stPwd">Reset password</button></div>
-      </div></div>` : '<div class="panel"><div class="empty">Only a super admin can manage staff.</div></div>'}</div>
+        <div class="form-actions"><button class="btn sm" id="stSave">Save</button><button class="btn ghost sm" id="stLeave">${u.onLeave ? 'Mark active' : 'Mark on leave'}</button></div>
+        <div class="form-actions" style="margin-top:8px">
+          <button class="btn ghost sm" id="stPwd">${icon('unlock', 'sm')} Change password</button>
+          ${u.id !== S.user.id ? `<button class="btn ghost sm" id="stLock">${icon(u.active === false ? 'unlock' : 'lock', 'sm')} ${u.active === false ? 'Unlock account' : 'Lock account'}</button>` : '<span class="secondary" style="align-self:center">(this is you)</span>'}
+        </div>
+      </div></div>` : '<div class="panel"><div class="empty">Only an admin can manage accounts.</div></div>'}</div>
     </div></div>`;
   wireBack();
   if (admin) {
     page().querySelector('#stSave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { teamId: page().querySelector('#stTeam').value, hours: page().querySelector('#stHours').value } }); toast('Saved'); staffDetail(id); });
     page().querySelector('#stLeave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { onLeave: !u.onLeave } }); toast(u.onLeave ? 'Marked active' : 'Marked on leave'); staffDetail(id); });
-    page().querySelector('#stPwd').addEventListener('click', async () => { const pw = prompt('New password for ' + u.name + ' (min 4 chars)'); if (!pw) return; try { await api('/api/staff/' + id + '/reset-password', { method: 'POST', body: { password: pw } }); toast('Password reset to: ' + pw); } catch (e) { toast(e.message); } });
+    page().querySelector('#stPwd').addEventListener('click', async () => { const pw = prompt('New password for ' + u.name + ' (min 4 chars)'); if (!pw) return; try { await api('/api/staff/' + id + '/reset-password', { method: 'POST', body: { password: pw } }); toast('Password changed to: ' + pw); } catch (e) { toast(e.message); } });
+    const lockBtn = page().querySelector('#stLock');
+    if (lockBtn) lockBtn.addEventListener('click', async () => { try { await api('/api/staff/' + id, { method: 'PATCH', body: { active: u.active === false } }); toast(u.active === false ? 'Account unlocked' : 'Account locked'); staffDetail(id); } catch (e) { toast(e.message); } });
   }
 }
 

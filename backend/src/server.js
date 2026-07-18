@@ -104,7 +104,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (pathname.startsWith('/api/')) {
-    const body = method === 'POST' ? await readBody(req) : {};
+    const body = ['POST', 'PUT', 'PATCH'].includes(method) ? await readBody(req) : {};
     const query = Object.fromEntries(u.searchParams.entries());
     try {
       const out = await apiRouter(deps, { method, path: pathname, query, body, headers: req.headers });

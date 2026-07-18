@@ -14,12 +14,12 @@ Meta    →  webhook = https://medinity-connect.onrender.com/webhook
 
 ## 1. Git repo (personal GitHub)
 
+Already wired to **github.com/shivam5600/medianity_automation** (`main`). To push new work:
+
 ```bash
 cd "0. MY explore/Nextgrow/2. Medianity"
-git init && git add -A && git commit -m "Medinity Connect: WhatsApp patient ecosystem (backend + admin panel)"
-git branch -M main
-git remote add origin https://github.com/<your-username>/medinity-connect.git   # create this empty repo first
-git push -u origin main
+git add -A && git commit -m "..."
+git push origin main   # Render autoDeploys on push (may lag — trigger via Render API if needed)
 ```
 
 ## 2. Backend on Render

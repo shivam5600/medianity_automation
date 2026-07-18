@@ -16,9 +16,10 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
 
   if (path === '/api/login' && method === 'POST') {
     const u = await store.getUserByLogin(body?.login || '');
-    if (!u || !u.active || !verifyPassword(body?.password || '', u.passwordHash)) {
+    if (!u || !verifyPassword(body?.password || '', u.passwordHash)) {
       return { status: 401, json: { error: 'Invalid email or password' } };
     }
+    if (u.active === false) return { status: 403, json: { error: 'Your account is locked. Please contact your admin.' } };
     return { status: 200, json: { token: signToken({ uid: u.id, role: u.role }), user: publicUser(u) } };
   }
 
@@ -277,6 +278,7 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
   }
   if (seg[1] === 'staff' && seg.length === 3 && method === 'PATCH') {
     if (!isAdmin(user) && user.id !== seg[2]) return { status: 403, json: { error: 'forbidden' } };
+    if (body?.active === false && seg[2] === user.id) return { status: 400, json: { error: 'You cannot lock your own account.' } };
     const u = await store.updateUser(seg[2], { name: body?.name, teamId: body?.teamId, role: body?.role, phone: body?.phone, hours: body?.hours, onLeave: body?.onLeave, active: body?.active });
     return { status: 200, json: u ? publicUserFull(u) : null };
   }
