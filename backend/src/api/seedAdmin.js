@@ -8,11 +8,13 @@ import { holdSlot, confirmBooking, markVisited } from '../services/booking.js';
 // Pilot logins (documented in README). Change SESSION_SECRET + these before real use.
 export async function seedAdminUsers(store) {
   if ((await store.listUsers()).length) return;
-  const mk = (name, login, role, teamId, pw) =>
-    store.addUser({ name, login, role, teamId, passwordHash: hashPassword(pw) });
+  const mk = (name, login, role, teamId, pw, extra = {}) =>
+    store.addUser({ name, login, role, teamId, passwordHash: hashPassword(pw), ...extra, hours: extra.hours || '09:00-18:00' });
   await mk('Admin', 'admin@medinity.local', 'super_admin', null, 'medinity@123');
+  await mk('Medinity Hospital', 'hospital@medinity.local', 'hospital', null, 'hospital@123');
   await mk('Front Desk', 'frontdesk@medinity.local', 'team_lead', 'front_desk', 'front@123');
   await mk('Housekeeping Lead', 'housekeeping@medinity.local', 'team_lead', 'housekeeping', 'house@123');
+  await mk('Dr. A. Sharma', 'dr.sharma@medinity.local', 'doctor', null, 'doctor@123', { doctorId: 'doc_ortho_1' });
 }
 
 export async function seedDemo(store) {
@@ -50,6 +52,8 @@ export async function seedDemo(store) {
   await store.updateBooking(b.id, { caseId: cA.id });
   await store.updateCase(cA.id, { bookingId: b.id });
   await confirmBooking(store, b.id);
+  await markVisited(store, b.id);
+  await recordRating(store, cA.id, 8); // rates Dr. A. Sharma (doc_ortho_1)
 
   // appointment -> confirmed -> visited (funnel: visited)
   const p6 = await P('+919990000006', 'Kiran Rao');
@@ -60,6 +64,7 @@ export async function seedDemo(store) {
   await store.updateCase(cB.id, { bookingId: b2.id });
   await confirmBooking(store, b2.id);
   await markVisited(store, b2.id);
+  await recordRating(store, cB.id, 9); // rates Dr. R. Verma (doc_gyn_1)
 
   // a still-pending hold (kept from expiry) so the "pending bookings" alert + actions show
   const p7 = await P('+919990000007', 'Asha Gupta');

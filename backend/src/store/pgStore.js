@@ -10,7 +10,7 @@ const numOrNull = (v) => (v == null ? null : Number(v));
 const idOrNull = (v) => (v == null ? null : String(v));
 
 const toPatient = (r) => (r ? { id: r.wa_phone, waPhone: r.wa_phone, name: r.name, lang: r.lang, notes: r.notes } : null);
-const toUser = (r) => (r ? { id: r.id, name: r.name, login: r.login, role: r.role, teamId: r.team_id, passwordHash: r.password_hash, phone: r.phone, hours: r.hours, onLeave: r.on_leave === true, active: r.active } : null);
+const toUser = (r) => (r ? { id: r.id, name: r.name, login: r.login, role: r.role, teamId: r.team_id, passwordHash: r.password_hash, phone: r.phone, hours: r.hours, doctorId: r.doctor_id, onLeave: r.on_leave === true, active: r.active } : null);
 const toSession = (r) => (r ? { waPhone: r.wa_phone, journey: r.journey, step: r.step, lang: r.lang, state: r.state || {}, lastActivityAt: numOrNull(r.last_activity_at), expiresAt: numOrNull(r.expires_at) } : null);
 const toTeam = (r) => (r ? { id: r.id, name: r.name } : null);
 const toCategory = (r) => (r ? { id: r.id, en: r.en, hi: r.hi, team: r.team, etaMin: r.eta_min, journeyType: r.journey_type } : null);
@@ -107,9 +107,9 @@ export async function createPgStore(connectionString) {
     async addUser(user) {
       const id = user.id || `user_${Math.random().toString(36).slice(2, 10)}`;
       const { rows } = await q(
-        `INSERT INTO users (id, name, login, role, team_id, password_hash, phone, hours, on_leave, active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-        [id, user.name, user.login, user.role, user.teamId ?? null, user.passwordHash ?? null, user.phone ?? null, user.hours ?? null, user.onLeave ?? false, user.active ?? true],
+        `INSERT INTO users (id, name, login, role, team_id, password_hash, phone, hours, doctor_id, on_leave, active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        [id, user.name, user.login, user.role, user.teamId ?? null, user.passwordHash ?? null, user.phone ?? null, user.hours ?? null, user.doctorId ?? null, user.onLeave ?? false, user.active ?? true],
       );
       return toUser(rows[0]);
     },
@@ -119,8 +119,8 @@ export async function createPgStore(connectionString) {
     },
     async updateUser(id, patch) {
       const { rows } = await q(
-        'UPDATE users SET name=COALESCE($2,name), team_id=COALESCE($3,team_id), role=COALESCE($4,role), phone=COALESCE($5,phone), hours=COALESCE($6,hours), on_leave=COALESCE($7,on_leave), active=COALESCE($8,active), password_hash=COALESCE($9,password_hash) WHERE id=$1 RETURNING *',
-        [id, patch.name ?? null, patch.teamId ?? null, patch.role ?? null, patch.phone ?? null, patch.hours ?? null, patch.onLeave ?? null, patch.active ?? null, patch.passwordHash ?? null],
+        'UPDATE users SET name=COALESCE($2,name), team_id=COALESCE($3,team_id), role=COALESCE($4,role), phone=COALESCE($5,phone), hours=COALESCE($6,hours), on_leave=COALESCE($7,on_leave), active=COALESCE($8,active), password_hash=COALESCE($9,password_hash), doctor_id=COALESCE($10,doctor_id) WHERE id=$1 RETURNING *',
+        [id, patch.name ?? null, patch.teamId ?? null, patch.role ?? null, patch.phone ?? null, patch.hours ?? null, patch.onLeave ?? null, patch.active ?? null, patch.passwordHash ?? null, patch.doctorId ?? null],
       );
       return toUser(rows[0]);
     },

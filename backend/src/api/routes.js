@@ -220,10 +220,19 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
 
   // ---- doctors + slots ----
   if (path === '/api/doctors' && method === 'GET') {
-    const docs = await store.listDoctors();
+    const [docs, cases, bookings, users] = await Promise.all([store.listDoctors(), store.listCases(), store.listBookings(), store.listUsers()]);
+    const caseById = Object.fromEntries(cases.map((c) => [c.id, c]));
+    const docRatings = {};
+    for (const b of bookings) {
+      const c = b.caseId ? caseById[b.caseId] : null;
+      if (c && c.rating != null) (docRatings[b.doctorId] ||= []).push(c.rating);
+    }
+    const acct = Object.fromEntries(users.filter((u) => u.doctorId).map((u) => [u.doctorId, u]));
     const out = await Promise.all(docs.map(async (d) => {
       const sl = await store.listSlotsByDoctor(d.id);
-      return { ...d, openSlots: sl.filter((s) => s.status === 'open').length, totalSlots: sl.length };
+      const r = docRatings[d.id] || [];
+      const a = acct[d.id];
+      return { ...d, openSlots: sl.filter((s) => s.status === 'open').length, totalSlots: sl.length, avgRating: r.length ? Number((r.reduce((x, y) => x + y, 0) / r.length).toFixed(1)) : null, ratingCount: r.length, hasAccount: !!a, onLeave: a ? !!a.onLeave : false };
     }));
     return { status: 200, json: out };
   }
@@ -255,18 +264,19 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
     const teamName = Object.fromEntries(teams.map((t) => [t.id, t.name]));
     return { status: 200, json: staff.map((u) => {
       const mine = cases.filter((c) => c.assigneeId === u.id);
-      return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId, teamName: u.teamId ? teamName[u.teamId] : '·', phone: u.phone || '', hours: u.hours || '', onLeave: !!u.onLeave, active: u.active !== false, assigned: mine.filter((c) => isOpen(c)).length, resolved: mine.filter((c) => c.status === 'resolved' || c.status === 'closed').length };
+      const rated = mine.map((c) => c.rating).filter((r) => r != null);
+      return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId, teamName: u.teamId ? teamName[u.teamId] : '·', phone: u.phone || '', hours: u.hours || '', onLeave: !!u.onLeave, active: u.active !== false, assigned: mine.filter((c) => isOpen(c)).length, resolved: mine.filter((c) => c.status === 'resolved' || c.status === 'closed').length, avgRating: rated.length ? Number((rated.reduce((x, y) => x + y, 0) / rated.length).toFixed(1)) : null };
     }) };
   }
   if (path === '/api/staff' && method === 'POST') {
-    if (user.role !== 'super_admin') return { status: 403, json: { error: 'only a super admin can add staff' } };
+    if (!isAdmin(user)) return { status: 403, json: { error: 'only an admin can add staff' } };
     if (!body?.name || !body?.login || !body?.password) return { status: 400, json: { error: 'name, login and password required' } };
     if (await store.getUserByLogin(body.login)) return { status: 409, json: { error: 'that login already exists' } };
     const u = await store.addUser({ name: body.name, login: body.login, role: body.role || 'agent', teamId: body.teamId || null, phone: body.phone || null, hours: body.hours || null, passwordHash: hashPassword(body.password) });
     return { status: 200, json: publicUserFull(u) };
   }
   if (seg[1] === 'staff' && seg.length === 3 && method === 'PATCH') {
-    if (user.role !== 'super_admin' && user.id !== seg[2]) return { status: 403, json: { error: 'forbidden' } };
+    if (!isAdmin(user) && user.id !== seg[2]) return { status: 403, json: { error: 'forbidden' } };
     const u = await store.updateUser(seg[2], { name: body?.name, teamId: body?.teamId, role: body?.role, phone: body?.phone, hours: body?.hours, onLeave: body?.onLeave, active: body?.active });
     return { status: 200, json: u ? publicUserFull(u) : null };
   }
@@ -293,7 +303,8 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
   if (path === '/api/me/shift' && method === 'GET') {
     const date = istToday();
     const shift = await store.getShift(user.id, date);
-    return { status: 200, json: { date, shift, needsCheckin: !shift && user.role !== 'super_admin' } };
+    // only ticket-working staff do a daily shift check-in (not admins or doctors)
+    return { status: 200, json: { date, shift, needsCheckin: !shift && ['team_lead', 'agent'].includes(user.role) } };
   }
   if (path === '/api/me/shift' && method === 'POST') {
     const date = istToday();
@@ -301,7 +312,7 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
     return { status: 200, json: shift };
   }
   if (seg[1] === 'staff' && seg[3] === 'reset-password' && method === 'POST') {
-    if (user.role !== 'super_admin') return { status: 403, json: { error: 'only a super admin can reset passwords' } };
+    if (!isAdmin(user)) return { status: 403, json: { error: 'only an admin can reset passwords' } };
     if (!body?.password || String(body.password).length < 4) return { status: 400, json: { error: 'password must be at least 4 characters' } };
     const target = await store.getUser(seg[2]);
     if (!target) return { status: 404, json: { error: 'not found' } };
@@ -317,7 +328,7 @@ function istToday() {
 }
 
 function publicUserFull(u) {
-  return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId, phone: u.phone, hours: u.hours, onLeave: u.onLeave, active: u.active };
+  return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId, doctorId: u.doctorId || null, phone: u.phone, hours: u.hours, onLeave: u.onLeave, active: u.active };
 }
 
 async function makeConfirmationPdf(store, adapter, b, notify) {
@@ -364,17 +375,20 @@ function casesToCsv(rows) {
 
 // ---- helpers ----
 
+const isAdmin = (u) => u.role === 'super_admin' || u.role === 'hospital';
+
 function publicUser(u) {
-  return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId };
+  return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId, doctorId: u.doctorId || null };
 }
 
 async function visibleCases(store, user) {
   const all = await store.listCases();
-  if (user.role === 'super_admin' || !user.teamId) return all;
+  if (isAdmin(user)) return all;
+  if (!user.teamId) return []; // doctors / unassigned users see no tickets
   return all.filter((c) => c.teamId === user.teamId);
 }
 function canSee(user, c) {
-  return user.role === 'super_admin' || !user.teamId || c.teamId === user.teamId;
+  return isAdmin(user) || (user.teamId && c.teamId === user.teamId);
 }
 
 async function enrich(store, c, detail) {

@@ -117,7 +117,8 @@ function renderLogin(err = '') {
 }
 
 /* ---------------- shell ---------------- */
-const roleLabel = (r) => ({ super_admin: 'Super Admin', team_lead: 'Team Lead', agent: 'Agent' }[r] || r);
+const roleLabel = (r) => ({ super_admin: 'Super Admin', hospital: 'Hospital Admin', team_lead: 'Team Lead', agent: 'Agent', doctor: 'Doctor' }[r] || r);
+const isAdmin = () => S.user && (S.user.role === 'super_admin' || S.user.role === 'hospital');
 
 const NAV = [
   ['Overview', [['dashboard', 'Dashboard', 'grid']]],
@@ -136,16 +137,14 @@ async function renderShell() {
   const k = S.metrics?.kpis || {};
   const alertCount = (S.metrics?.alerts?.sla?.length || 0) + (S.metrics?.alerts?.support?.length || 0);
   const counts = { tickets: k.openTickets || 0, bookings: k.pendingBookings || 0, alerts: alertCount };
-  // resolve portal (doctor / team) for non-admins
-  if (S.user.role === 'super_admin') S.portal = 'team';
-  else if (S.portal === null) {
-    const saved = localStorage.getItem('mc_portal_' + S.user.id);
-    if (saved === 'doctor') { S.portal = 'doctor'; S.docId = localStorage.getItem('mc_docid_' + S.user.id); }
-    else if (saved === 'team') S.portal = 'team';
-  }
+  // route by role: doctor -> doctor portal; everyone else -> team panel (admins also get Setup)
+  if (S.user.role === 'doctor') { S.portal = 'doctor'; if (!S.docId) S.docId = S.user.doctorId; }
+  else S.portal = 'team';
+  const admin = isAdmin();
   const isDoc = S.portal === 'doctor';
-  const navSrc = isDoc ? DOCTOR_NAV : NAV;
+  const navSrc = isDoc ? DOCTOR_NAV : (admin ? NAV : NAV.filter(([g]) => g !== 'Setup'));
   if (isDoc && !['myslots', 'myappts'].includes(S.view)) S.view = 'myslots';
+  if (!admin && !isDoc && ['doctors', 'staff'].includes(S.view)) S.view = 'dashboard';
   app().innerHTML = `
     <div class="shell">
       <aside class="sidebar">
@@ -170,7 +169,6 @@ async function renderShell() {
   if (S.detail) renderDetail();
   else (VIEWS[S.view] || viewDashboard)();
   maybeCheckin();
-  maybeChooser();
 }
 
 async function maybeChooser() {
@@ -765,7 +763,7 @@ async function viewDoctors() {
   const docs = await api('/api/doctors');
   const el = document.getElementById('docMain');
   if (!docs.length) return (el.innerHTML = `<div class="empty">No doctors yet. Add one to publish slots.</div>`);
-  el.innerHTML = docs.map((d) => `<div class="list-row" data-d="${esc(d.id)}" style="grid-template-columns:minmax(0,1fr) auto auto"><div style="min-width:0"><div class="primary">${esc(d.name)}</div><div class="secondary">${esc(d.department)}</div></div><span class="pill">${d.openSlots} open</span><span class="secondary">${d.totalSlots} slots</span></div>`).join('');
+  el.innerHTML = docs.map((d) => `<div class="list-row" data-d="${esc(d.id)}" style="grid-template-columns:minmax(0,1fr) auto auto auto"><div style="min-width:0"><div class="primary">${esc(d.name)} ${d.onLeave ? '<span class="pill leave">on leave</span>' : ''}</div><div class="secondary">${esc(d.department)}</div></div>${d.avgRating != null ? `<span class="pill">★ ${d.avgRating}/10</span>` : '<span class="secondary">no ratings</span>'}<span class="pill">${d.openSlots} open</span><span class="secondary">${d.totalSlots} slots</span></div>`).join('');
   el.querySelectorAll('[data-d]').forEach((e) => e.addEventListener('click', () => goDetail('doctor', e.dataset.d)));
 }
 async function addDoctor() {
@@ -784,7 +782,7 @@ const slotShell = () => `
 async function doctorDetail(id) {
   const docs = await api('/api/doctors');
   const doc = docs.find((d) => d.id === id) || { name: 'Doctor', department: '' };
-  page().innerHTML = detailHead(esc(doc.name) + ' · ' + esc(doc.department)) + slotShell();
+  page().innerHTML = detailHead(esc(doc.name) + ' · ' + esc(doc.department) + (doc.avgRating != null ? ` · ★ ${doc.avgRating}/10` : '')) + slotShell();
   wireBack();
   await slotBuilder(id);
 }
@@ -864,12 +862,12 @@ async function slotBuilder(id) {
 
 /* ---------------- staff (team directory) ---------------- */
 async function viewStaff() {
-  const isAdmin = S.user.role === 'super_admin';
-  page().innerHTML = `<div class="pagehead"><div><h1>Staff</h1><div class="sub">Team directory · workload, hours and leave</div></div>${isAdmin ? `<button class="btn sm" id="addStaff">${icon('users', 'sm')} Add staff</button>` : ''}</div>
+  const admin = isAdmin();
+  page().innerHTML = `<div class="pagehead"><div><h1>Staff</h1><div class="sub">Team directory · workload, hours and leave</div></div>${admin ? `<button class="btn sm" id="addStaff">${icon('users', 'sm')} Add staff</button>` : ''}</div>
     <div class="main"><div class="panel" id="stMain" style="padding:0"><div class="empty">Loading…</div></div></div>`;
-  if (isAdmin) document.getElementById('addStaff').addEventListener('click', addStaff);
+  if (admin) document.getElementById('addStaff').addEventListener('click', addStaff);
   const rows = await api('/api/staff');
-  document.getElementById('stMain').innerHTML = rows.map((u) => `<div class="list-row" data-s="${esc(u.id)}" style="grid-template-columns:minmax(0,1fr) auto auto auto"><div style="min-width:0"><div class="primary">${esc(u.name)} ${u.onLeave ? '<span class="pill leave">on leave</span>' : ''}</div><div class="secondary">${esc(u.login)} · ${esc(roleLabel(u.role))} · ${esc(u.teamName)}</div></div><span class="pill">${u.assigned} open</span><span class="pill">${u.resolved} done</span><span class="secondary">${esc(u.hours || '·')}</span></div>`).join('');
+  document.getElementById('stMain').innerHTML = rows.map((u) => `<div class="list-row" data-s="${esc(u.id)}" style="grid-template-columns:minmax(0,1fr) auto auto auto auto"><div style="min-width:0"><div class="primary">${esc(u.name)} ${u.onLeave ? '<span class="pill leave">on leave</span>' : ''}</div><div class="secondary">${esc(u.login)} · ${esc(roleLabel(u.role))} · ${esc(u.teamName)}</div></div>${u.avgRating != null ? `<span class="pill">★ ${u.avgRating}/10</span>` : '<span></span>'}<span class="pill">${u.assigned} open</span><span class="pill">${u.resolved} done</span><span class="secondary">${esc(u.hours || '·')}</span></div>`).join('');
   document.querySelectorAll('#stMain [data-s]').forEach((e) => e.addEventListener('click', () => goDetail('staff', e.dataset.s)));
 }
 async function addStaff() {
@@ -884,7 +882,7 @@ async function staffDetail(id) {
   const [rows, cfg] = await Promise.all([api('/api/staff'), api('/api/config')]);
   const u = rows.find((r) => r.id === id);
   if (!u) return backToList();
-  const isAdmin = S.user.role === 'super_admin';
+  const admin = isAdmin();
   page().innerHTML = detailHead(esc(u.name)) + `
     <div class="main"><div class="detail-grid">
       <div><div class="panel"><h3>Profile</h3><div class="body"><div class="kv" style="margin:0">
@@ -894,15 +892,16 @@ async function staffDetail(id) {
         <div class="k">Hours</div><div>${esc(u.hours || '·')}</div>
         <div class="k">Status</div><div>${u.onLeave ? '<span class="pill leave">on leave</span>' : '<span class="pill">active</span>'}</div>
         <div class="k">Workload</div><div>${u.assigned} open · ${u.resolved} resolved</div>
+        <div class="k">Rating</div><div>${u.avgRating != null ? `★ <b>${u.avgRating}</b> / 10` : '·'}</div>
       </div></div></div></div>
-      <div>${isAdmin ? `<div class="panel"><h3>Manage</h3><div class="body">
+      <div>${admin ? `<div class="panel"><h3>Manage</h3><div class="body">
         <label>Team</label><select id="stTeam">${cfg.teams.map((t) => `<option value="${t.id}" ${u.teamId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
         <label>Working hours</label><input id="stHours" value="${esc(u.hours || '')}" placeholder="09:00-18:00" />
         <div class="form-actions"><button class="btn sm" id="stSave">Save</button><button class="btn ghost sm" id="stLeave">${u.onLeave ? 'Mark active' : 'Mark on leave'}</button><button class="btn ghost sm" id="stPwd">Reset password</button></div>
       </div></div>` : '<div class="panel"><div class="empty">Only a super admin can manage staff.</div></div>'}</div>
     </div></div>`;
   wireBack();
-  if (isAdmin) {
+  if (admin) {
     page().querySelector('#stSave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { teamId: page().querySelector('#stTeam').value, hours: page().querySelector('#stHours').value } }); toast('Saved'); staffDetail(id); });
     page().querySelector('#stLeave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { onLeave: !u.onLeave } }); toast(u.onLeave ? 'Marked active' : 'Marked on leave'); staffDetail(id); });
     page().querySelector('#stPwd').addEventListener('click', async () => { const pw = prompt('New password for ' + u.name + ' (min 4 chars)'); if (!pw) return; try { await api('/api/staff/' + id + '/reset-password', { method: 'POST', body: { password: pw } }); toast('Password reset to: ' + pw); } catch (e) { toast(e.message); } });

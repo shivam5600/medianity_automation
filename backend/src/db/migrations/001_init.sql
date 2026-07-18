@@ -31,11 +31,13 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT,
   phone         TEXT,
   hours         TEXT,
+  doctor_id     TEXT,
   on_leave      BOOLEAN DEFAULT FALSE,
   active        BOOLEAN DEFAULT TRUE
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS hours TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS doctor_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS on_leave BOOLEAN DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS shifts (
