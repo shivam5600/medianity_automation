@@ -20,6 +20,10 @@ export function createMockAdapter() {
     reset() {
       sent.length = 0;
     },
+    async sendDocument(waPhone, doc) {
+      sent.push({ waPhone, kind: 'document', filename: doc.filename });
+      return { ok: true };
+    },
     // Tiny test image so the complaint-photo flow is exercisable without live WhatsApp.
     async downloadMedia() {
       const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';

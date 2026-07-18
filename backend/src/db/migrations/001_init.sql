@@ -6,8 +6,21 @@ CREATE TABLE IF NOT EXISTS patients (
   wa_phone   TEXT PRIMARY KEY,
   name       TEXT,
   lang       TEXT,
+  notes      TEXT,
   created_at BIGINT
 );
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS notes TEXT;
+
+-- patient log-book entries (visits, hospitalisations, notes added by staff)
+CREATE TABLE IF NOT EXISTS patient_records (
+  id       BIGSERIAL PRIMARY KEY,
+  wa_phone TEXT,
+  kind     TEXT,
+  note     TEXT,
+  author   TEXT,
+  at       BIGINT
+);
+CREATE INDEX IF NOT EXISTS idx_records_phone ON patient_records (wa_phone);
 
 CREATE TABLE IF NOT EXISTS users (
   id            TEXT PRIMARY KEY,
@@ -16,7 +29,24 @@ CREATE TABLE IF NOT EXISTS users (
   role          TEXT,
   team_id       TEXT,
   password_hash TEXT,
+  phone         TEXT,
+  hours         TEXT,
+  on_leave      BOOLEAN DEFAULT FALSE,
   active        BOOLEAN DEFAULT TRUE
+);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS hours TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS on_leave BOOLEAN DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS shifts (
+  id               BIGSERIAL PRIMARY KEY,
+  user_id          TEXT,
+  date             TEXT,
+  start_time       TEXT,
+  end_time         TEXT,
+  weekly_leave_day TEXT,
+  at               BIGINT,
+  UNIQUE(user_id, date)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (

@@ -108,25 +108,29 @@ function renderLogin(err = '') {
 /* ---------------- shell ---------------- */
 const roleLabel = (r) => ({ super_admin: 'Super Admin', team_lead: 'Team Lead', agent: 'Agent' }[r] || r);
 
+const NAV = [
+  ['Overview', [['dashboard', 'Dashboard', 'grid']]],
+  ['Operations', [['tickets', 'Tickets', 'ticket'], ['bookings', 'Bookings', 'calendar'], ['alerts', 'Alerts', 'bell']]],
+  ['Records', [['patients', 'Patients', 'users'], ['feedback', 'Feedback', 'star']]],
+  ['Setup', [['doctors', 'Doctors', 'pin'], ['staff', 'Staff', 'headset']]],
+];
+const VIEWS = { dashboard: viewDashboard, tickets: viewTickets, bookings: viewBookings, alerts: viewAlerts, patients: viewPatients, feedback: viewFeedback, doctors: viewDoctors, staff: viewStaff };
+
 async function renderShell() {
   try {
     S.metrics = await api('/api/metrics?' + rangeQuery()); // also feeds nav counts
   } catch (e) { if (e.message === 'unauthorized') return; }
   const k = S.metrics?.kpis || {};
   const alertCount = (S.metrics?.alerts?.sla?.length || 0) + (S.metrics?.alerts?.support?.length || 0);
-  const navItems = [
-    ['dashboard', 'Dashboard', 'grid', null],
-    ['tickets', 'Tickets', 'ticket', k.openTickets || 0],
-    ['bookings', 'Bookings', 'calendar', k.pendingBookings || 0],
-  ];
+  const counts = { tickets: k.openTickets || 0, bookings: k.pendingBookings || 0, alerts: alertCount };
   app().innerHTML = `
     <div class="shell">
       <aside class="sidebar">
         <div class="brand"><div class="mark">M</div><div><b>Medinity</b><small>Connect · Admin</small></div></div>
         <nav class="nav">
-          ${navItems.map(([v, l, ic, c]) => `
-            <button data-v="${v}" class="${S.view === v ? 'active' : ''}">${icon(ic)} <span>${l}</span>
-              ${c ? `<span class="count ${v === 'tickets' && alertCount ? 'hot' : ''}">${c}</span>` : ''}</button>`).join('')}
+          ${NAV.map(([group, items]) => `
+            <div class="nav-group">${group}</div>
+            ${items.map(([v, l, ic]) => `<button data-v="${v}" class="${S.view === v ? 'active' : ''}">${icon(ic)} <span>${l}</span>${counts[v] ? `<span class="count ${v === 'alerts' ? 'hot' : ''}">${counts[v]}</span>` : ''}</button>`).join('')}`).join('')}
         </nav>
         <div class="side-foot">
           <div class="who"><b>${esc(S.user.name)}</b>${esc(roleLabel(S.user.role))}</div>
@@ -139,9 +143,40 @@ async function renderShell() {
   document.querySelectorAll('.nav button').forEach((b) => b.addEventListener('click', () => { S.view = b.dataset.v; renderShell(); }));
   document.getElementById('themeBtn').addEventListener('click', toggleTheme);
   document.getElementById('logoutBtn').addEventListener('click', logout);
-  ({ dashboard: viewDashboard, tickets: viewTickets, bookings: viewBookings }[S.view])();
+  (VIEWS[S.view] || viewDashboard)();
+  maybeCheckin();
 }
 const page = () => document.getElementById('page');
+
+// ---- staff daily check-in (first login of the IST day) ----
+async function maybeCheckin() {
+  if (S.shiftChecked) return;
+  S.shiftChecked = true;
+  let info;
+  try { info = await api('/api/me/shift'); } catch (e) { return; }
+  if (!info.needsCheckin) return;
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="max-width:420px">
+      <header><h3>Start your shift · ${esc(info.date)}</h3></header>
+      <div class="body">
+        <div class="sub" style="color:var(--muted);margin-bottom:14px">Confirm today's working hours and your weekly off. We use these to route and track your tickets.</div>
+        <label>Shift start</label><input type="time" id="ciStart" value="09:00" />
+        <label>Shift end</label><input type="time" id="ciEnd" value="18:00" />
+        <label>Weekly off day</label>
+        <select id="ciLeave">${days.map((d) => `<option value="${d}">${d}</option>`).join('')}</select>
+        <button class="btn full" id="ciSave">Start shift</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#ciSave').addEventListener('click', async () => {
+    await api('/api/me/shift', { method: 'POST', body: { startTime: overlay.querySelector('#ciStart').value, endTime: overlay.querySelector('#ciEnd').value, weeklyLeaveDay: overlay.querySelector('#ciLeave').value } });
+    overlay.remove();
+    toast('Shift started · have a great day');
+  });
+}
 
 /* ---------------- date range ---------------- */
 const RANGES = { '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days', all: 'All time' };
@@ -163,15 +198,22 @@ function rangeQuery() {
 function viewDashboard() {
   const m = S.metrics;
   const k = m?.kpis || {};
-  const cards = [
-    ['Leads', k.leads, 'users', '', { view: 'tickets', type: 'enquiry' }],
-    ['Open tickets', k.openTickets, 'ticket', '', { view: 'tickets', type: 'complaint' }],
-    ['Resolved', k.resolved, 'check', '', { view: 'tickets', status: 'resolved' }],
-    ['Pending bookings', k.pendingBookings, 'calendar', k.pendingBookings ? 'warn' : '', { view: 'bookings' }],
-    ['SLA breaches', k.slaBreaches, 'alert', k.slaBreaches ? 'alert' : '', { view: 'tickets', sla: true }],
-    ['Support handoffs', k.supportHandoffs, 'headset', '', { view: 'tickets', type: 'support' }],
-    ['Avg rating', k.avgRating == null ? '·' : k.avgRating + ' /10', 'star', '', null],
-    ['Avg resolution', k.avgResolutionMin == null ? '·' : k.avgResolutionMin + 'm', 'clock', '', null],
+  const stat = (n, l, cls, nav) => `<div class="stat ${cls || ''} ${nav ? 'click' : ''}" ${nav ? `data-goto='${esc(JSON.stringify(nav))}'` : ''}><div class="n">${n ?? 0}</div><div class="l">${l}</div></div>`;
+  const groups = [
+    ['Tickets', 'ticket', [
+      stat(k.openTickets, 'Open', '', { view: 'tickets', type: 'complaint' }),
+      stat(k.resolved, 'Resolved', '', { view: 'tickets', status: 'resolved' }),
+      stat(k.slaBreaches, 'SLA breaches', k.slaBreaches ? 'alert' : '', { view: 'tickets', sla: true }),
+      stat(k.supportHandoffs, 'Support', '', { view: 'tickets', type: 'support' }),
+    ]],
+    ['Appointments', 'calendar', [
+      stat(k.leads, 'Leads', '', { view: 'tickets', type: 'enquiry' }),
+      stat(k.pendingBookings, 'Pending', k.pendingBookings ? 'warn' : '', { view: 'bookings' }),
+    ]],
+    ['Service quality', 'star', [
+      stat(k.avgRating == null ? '·' : k.avgRating + ' /10', 'Avg rating', '', { view: 'feedback' }),
+      stat(k.avgResolutionMin == null ? '·' : k.avgResolutionMin + 'm', 'Avg resolution', ''),
+    ]],
   ];
   const rangeLabel = S.range === 'custom' ? (S.customFrom && S.customTo ? `${S.customFrom} to ${S.customTo}` : 'Custom range') : RANGES[S.range];
   page().innerHTML = `
@@ -184,8 +226,8 @@ function viewDashboard() {
       </div>
     </div>
     <div class="main">
-      <div class="kpis">
-        ${cards.map(([l, n, ic, cls, nav]) => `<div class="kpi ${cls} ${nav ? 'clickable' : ''}" ${nav ? `data-goto='${esc(JSON.stringify(nav))}'` : ''}><div class="ic">${icon(ic)}</div><div><div class="n">${n ?? 0}</div><div class="l">${l}</div></div></div>`).join('')}
+      <div class="kpi-groups">
+        ${groups.map(([title, ic, stats]) => `<div class="kpi-group"><h4>${icon(ic, 'sm')} ${title}</h4><div class="stat-row">${stats.join('')}</div></div>`).join('')}
       </div>
       ${alertsPanel(m?.alerts)}
       <div class="grid2">
@@ -215,7 +257,7 @@ function viewDashboard() {
     S.metrics = await api('/api/metrics?' + rangeQuery());
     renderShell();
   });
-  page().querySelectorAll('.kpi.clickable').forEach((el) =>
+  page().querySelectorAll('.stat.click').forEach((el) =>
     el.addEventListener('click', () => {
       const nav = JSON.parse(el.dataset.goto);
       S.view = nav.view;
@@ -413,6 +455,8 @@ async function openCase(id) {
           ${photo && photo.url ? `<div class="k">Photo</div><div><a href="${esc(photo.url)}" target="_blank"><img class="attach" src="${esc(photo.url)}" alt="complaint photo" /></a></div>` : photo ? `<div class="k">Photo</div><div>attached (media ${esc(photo.waMediaId)})</div>` : ''}
           ${c.booking ? `<div class="k">Booking</div><div>${esc(c.booking.doctorName)}, ${esc(c.booking.slotLabel)} · <span class="badge b-${c.booking.status === 'confirmed' || c.booking.status === 'visited' ? 'resolved' : 'assigned'}">${esc(c.booking.status)}</span></div>` : ''}
           ${c.rating ? `<div class="k">Rating</div><div><b>${c.rating}</b> / 10</div>` : ''}
+          <div class="k">Opened</div><div>${fmt(c.createdAt)}</div>
+          ${c.resolvedAt ? `<div class="k">Resolved in</div><div>${Math.round((c.resolvedAt - c.createdAt) / 60000)} min</div>` : ''}
         </div>
         <div class="section-title">History</div>
         <div class="timeline">${evRows || '<div class="ev t">No history yet.</div>'}</div>
@@ -493,6 +537,7 @@ async function openBooking(id) {
           <div class="k">Status</div><div><span class="badge b-${bookingBadge(b.status)}">${esc(b.status)}</span></div>
           ${b.visitedAt ? `<div class="k">Visited</div><div>${fmt(b.visitedAt)}</div>` : ''}
         </div>
+        ${b.pdfUrl ? `<div style="margin-bottom:12px"><a class="btn ghost sm" href="${b.pdfUrl}" download="appointment-confirmation.pdf">${icon('download', 'sm')} Download confirmation PDF</a></div>` : ''}
         <div class="section-title">Activity</div>
         <div class="timeline">${evRows || '<div class="ev t">No activity yet.</div>'}</div>
         <div id="reschedRow"></div>
@@ -554,6 +599,163 @@ async function exportCsv() {
   a.click();
   URL.revokeObjectURL(url);
   toast('Exported CSV');
+}
+
+/* ---------------- alerts ---------------- */
+function alertCol(title, items) {
+  return `<div class="alert-col"><h4>${title} <span style="color:var(--muted)">(${items.length})</span></h4>${items.length ? items.join('') : `<div class="alert-empty">None</div>`}</div>`;
+}
+async function viewAlerts() {
+  page().innerHTML = `<div class="pagehead"><div><h1>Alerts</h1><div class="sub">Items that need attention right now</div></div></div>
+    <div class="main" id="alertsMain"><div class="empty">Loading…</div></div>`;
+  const a = await api('/api/alerts');
+  const el = document.getElementById('alertsMain');
+  if (a.sla.length + a.bookings.length + a.support.length === 0) return (el.innerHTML = `<div class="panel"><div class="empty">${icon('check')} All clear · no open alerts.</div></div>`);
+  el.innerHTML = `<div class="alerts">
+    ${alertCol('SLA breaches', a.sla.map((x) => `<div class="alert-item" data-open="${esc(x.id)}" style="--al:var(--c-red)"><div><div class="t">${esc(x.humanNo)} · ${esc(x.team)}</div><div class="s">Room ${esc(x.roomBed)} · overdue ${x.overdueMin}m</div></div>${icon('alert', 'sm')}</div>`))}
+    ${alertCol('Pending bookings', a.bookings.map((x) => `<div class="alert-item" data-bk="${esc(x.id)}" style="--al:var(--c-amber)"><div><div class="t">${esc(x.patientName)}</div><div class="s">${esc(x.doctor)} · ${esc(x.slot)}</div></div>${icon('calendar', 'sm')}</div>`))}
+    ${alertCol('Support handoffs', a.support.map((x) => `<div class="alert-item" data-open="${esc(x.id)}" style="--al:var(--c-teal)"><div><div class="t">${esc(x.humanNo)}</div><div class="s">${esc(x.waPhone)}</div></div>${icon('headset', 'sm')}</div>`))}
+  </div>`;
+  el.querySelectorAll('[data-open]').forEach((e) => e.addEventListener('click', () => openCase(e.dataset.open)));
+  el.querySelectorAll('[data-bk]').forEach((e) => e.addEventListener('click', () => openBooking(e.dataset.bk)));
+}
+
+/* ---------------- feedback ---------------- */
+async function viewFeedback() {
+  page().innerHTML = `<div class="pagehead"><div><h1>Feedback</h1><div class="sub">Patient ratings, 1 to 10</div></div></div>
+    <div class="main" id="fbMain"><div class="empty">Loading…</div></div>`;
+  const f = await api('/api/feedback');
+  const maxD = Math.max(1, ...Object.values(f.distribution));
+  const dist = Object.entries(f.distribution).map(([n, c]) => `<div class="b" style="height:${(c / maxD) * 100}%" title="${n}: ${c}"><span>${n}</span></div>`).join('');
+  document.getElementById('fbMain').innerHTML = `
+    <div class="grid2">
+      <div class="panel"><h3>${icon('star')} Rating distribution</h3><div class="body">
+        ${f.count ? `<div style="font-size:26px;font-weight:800">${f.avg} <span style="font-size:14px;color:var(--muted)">/ 10 avg · ${f.count} ratings</span></div><div class="dist" style="margin-top:14px">${dist}</div><div style="height:20px"></div>` : `<div class="empty">No ratings yet.</div>`}
+      </div></div>
+      <div class="panel"><h3>${icon('users')} Recent feedback</h3><div class="body" style="padding:0">
+        ${f.items.length ? f.items.map((c) => `<div class="list-row" data-open="${esc(c.id)}" style="grid-template-columns:auto 1fr auto"><span class="badge b-resolved">${c.rating}/10</span><div><div class="primary">${esc(c.patientName || '·')}</div><div class="secondary">${esc(c.humanNo)} · ${esc(catName(c.categoryName))}</div></div><span class="secondary">${c.resolvedAt ? timeAgo(c.resolvedAt) : ''}</span></div>`).join('') : `<div class="empty">No feedback yet.</div>`}
+      </div></div>
+    </div>`;
+  document.querySelectorAll('#fbMain [data-open]').forEach((e) => e.addEventListener('click', () => openCase(e.dataset.open)));
+}
+
+/* ---------------- patients (log book) ---------------- */
+async function viewPatients() {
+  page().innerHTML = `<div class="pagehead"><div><h1>Patients</h1><div class="sub">Log book · history and notes</div></div></div>
+    <div class="main"><div class="panel" id="ptMain" style="padding:0"><div class="empty">Loading…</div></div></div>`;
+  const rows = await api('/api/patients');
+  const el = document.getElementById('ptMain');
+  if (!rows.length) return (el.innerHTML = `<div class="empty">No patients yet.</div>`);
+  el.innerHTML = rows.map((p) => `<div class="list-row" data-p="${esc(p.waPhone)}" style="grid-template-columns:minmax(0,1fr) auto auto auto"><div style="min-width:0"><div class="primary">${esc(p.name)}</div><div class="secondary">${esc(p.waPhone)}</div></div><span class="pill">${p.tickets} tickets</span><span class="pill">${p.visits} visits</span><span class="secondary">${p.lastAt ? timeAgo(p.lastAt) : '·'}</span></div>`).join('');
+  el.querySelectorAll('[data-p]').forEach((e) => e.addEventListener('click', () => openPatient(e.dataset.p)));
+}
+async function openPatient(waPhone) {
+  const d = await api('/api/patients/' + encodeURIComponent(waPhone));
+  const p = d.patient;
+  const caseRows = d.cases.map((c) => `<div class="ev"><b>${esc(c.humanNo)}</b> · ${label(c.type)} · ${esc(catName(c.categoryName))} · <span class="badge b-${c.status}">${label(c.status)}</span> <span class="t">${fmt(c.createdAt)}</span></div>`).join('');
+  const bkRows = d.bookings.map((b) => `<div class="ev">${esc(b.doctorName)} · ${esc(b.slotLabel)} · <span class="badge b-${bookingBadge(b.status)}">${esc(b.status)}</span></div>`).join('');
+  const recRows = d.records.map((r) => `<div class="ev"><span class="t">${fmt(r.at)}</span> · <b>${esc(r.kind)}</b> · ${esc(r.note)} <span class="t">(${esc(r.author)})</span></div>`).join('');
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="modal"><header><h3>${esc(p.name || '·')} · ${esc(p.waPhone)}</h3><button class="x">${icon('x')}</button></header>
+    <div class="body">
+      <div class="section-title">Notes</div>
+      <textarea id="ptNotes" rows="2" style="width:100%;padding:9px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);resize:vertical;font:inherit">${esc(p.notes || '')}</textarea>
+      <div style="margin-top:8px"><button class="btn sm" id="saveNotes">Save notes</button></div>
+      <div class="section-title">Add log entry (visit / hospitalisation / note)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><select id="recKind" style="width:auto"><option value="note">Note</option><option value="hospitalisation">Hospitalisation</option><option value="visit">Visit</option></select><input id="recNote" placeholder="Details..." style="flex:1;min-width:150px"/><button class="btn sm" id="addRec">Add</button></div>
+      <div class="section-title">Log book</div><div class="timeline">${recRows || '<div class="ev t">No log entries.</div>'}</div>
+      <div class="section-title">Tickets (${d.cases.length})</div><div class="timeline">${caseRows || '<div class="ev t">None.</div>'}</div>
+      <div class="section-title">Appointments (${d.bookings.length})</div><div class="timeline">${bkRows || '<div class="ev t">None.</div>'}</div>
+    </div></div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('.x').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#saveNotes').addEventListener('click', async () => { await api('/api/patients/' + encodeURIComponent(waPhone), { method: 'PATCH', body: { notes: overlay.querySelector('#ptNotes').value } }); toast('Notes saved'); });
+  overlay.querySelector('#addRec').addEventListener('click', async () => { const note = overlay.querySelector('#recNote').value.trim(); if (!note) return; await api('/api/patients/' + encodeURIComponent(waPhone) + '/records', { method: 'POST', body: { kind: overlay.querySelector('#recKind').value, note } }); overlay.remove(); openPatient(waPhone); toast('Log entry added'); });
+}
+
+/* ---------------- doctors + slot management ---------------- */
+async function viewDoctors() {
+  page().innerHTML = `<div class="pagehead"><div><h1>Doctors</h1><div class="sub">Manage doctors and live slot availability</div></div><button class="btn sm" id="addDoc">${icon('users', 'sm')} Add doctor</button></div>
+    <div class="main"><div class="panel" id="docMain" style="padding:0"><div class="empty">Loading…</div></div></div>`;
+  document.getElementById('addDoc').addEventListener('click', addDoctor);
+  const docs = await api('/api/doctors');
+  const el = document.getElementById('docMain');
+  if (!docs.length) return (el.innerHTML = `<div class="empty">No doctors yet. Add one to publish slots.</div>`);
+  el.innerHTML = docs.map((d) => `<div class="list-row" data-d="${esc(d.id)}" style="grid-template-columns:minmax(0,1fr) auto auto"><div style="min-width:0"><div class="primary">${esc(d.name)}</div><div class="secondary">${esc(d.department)}</div></div><span class="pill">${d.openSlots} open</span><span class="secondary">${d.totalSlots} slots</span></div>`).join('');
+  el.querySelectorAll('[data-d]').forEach((e) => e.addEventListener('click', () => openDoctor(e.dataset.d)));
+}
+async function addDoctor() {
+  const name = prompt('Doctor name'); if (!name) return;
+  const department = prompt('Department'); if (!department) return;
+  await api('/api/doctors', { method: 'POST', body: { name, department } });
+  toast('Doctor added');
+  viewDoctors();
+}
+async function openDoctor(id) {
+  const slots = await api('/api/doctors/' + id + '/slots');
+  const slotRows = slots.map((s) => `<div class="slot-item"><div>${esc(s.label)} <span class="secondary">· cap ${s.capacity} · ${s.bookedCount} booked</span></div><div>${s.bookedCount > 0 ? `<span class="pill">booked</span>` : `<button class="btn ghost sm" data-del="${esc(s.id)}">Remove</button>`}</div></div>`).join('');
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="modal"><header><h3>Slot availability</h3><button class="x">${icon('x')}</button></header>
+    <div class="body">
+      <div class="section-title">Add a slot</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap"><input id="slLabel" placeholder="e.g. Tomorrow 11:00" style="flex:1;min-width:160px"/><input id="slCap" type="number" min="1" value="1" style="width:80px" title="capacity"/><button class="btn sm" id="addSlot">Add</button></div>
+      <div class="section-title">Current slots (patients pick these on WhatsApp)</div>
+      <div>${slotRows || '<div class="ev t">No slots yet. Add availability so patients can book real times.</div>'}</div>
+    </div></div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('.x').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  overlay.querySelector('#addSlot').addEventListener('click', async () => { const label = overlay.querySelector('#slLabel').value.trim(); if (!label) return; await api('/api/doctors/' + id + '/slots', { method: 'POST', body: { label, capacity: Number(overlay.querySelector('#slCap').value) || 1 } }); overlay.remove(); openDoctor(id); toast('Slot added · live on WhatsApp'); });
+  overlay.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => { await api('/api/slots/' + b.dataset.del, { method: 'DELETE' }); overlay.remove(); openDoctor(id); toast('Slot removed'); }));
+}
+
+/* ---------------- staff (team directory) ---------------- */
+async function viewStaff() {
+  const isAdmin = S.user.role === 'super_admin';
+  page().innerHTML = `<div class="pagehead"><div><h1>Staff</h1><div class="sub">Team directory · workload, hours and leave</div></div>${isAdmin ? `<button class="btn sm" id="addStaff">${icon('users', 'sm')} Add staff</button>` : ''}</div>
+    <div class="main"><div class="panel" id="stMain" style="padding:0"><div class="empty">Loading…</div></div></div>`;
+  if (isAdmin) document.getElementById('addStaff').addEventListener('click', addStaff);
+  const rows = await api('/api/staff');
+  document.getElementById('stMain').innerHTML = rows.map((u) => `<div class="list-row" data-s="${esc(u.id)}" style="grid-template-columns:minmax(0,1fr) auto auto auto"><div style="min-width:0"><div class="primary">${esc(u.name)} ${u.onLeave ? '<span class="pill leave">on leave</span>' : ''}</div><div class="secondary">${esc(u.login)} · ${esc(roleLabel(u.role))} · ${esc(u.teamName)}</div></div><span class="pill">${u.assigned} open</span><span class="pill">${u.resolved} done</span><span class="secondary">${esc(u.hours || '·')}</span></div>`).join('');
+  document.querySelectorAll('#stMain [data-s]').forEach((e) => e.addEventListener('click', () => openStaff(e.dataset.s, rows.find((r) => r.id === e.dataset.s))));
+}
+async function addStaff() {
+  const name = prompt('Staff name'); if (!name) return;
+  const login = prompt('Login email'); if (!login) return;
+  const password = prompt('Temporary password (min 4 chars)'); if (!password) return;
+  const cfg = await api('/api/config');
+  const teamId = prompt('Team (' + cfg.teams.map((t) => t.id).join(', ') + ')', 'front_desk');
+  try { await api('/api/staff', { method: 'POST', body: { name, login, password, role: 'agent', teamId } }); toast('Staff added · password: ' + password); viewStaff(); } catch (e) { toast(e.message); }
+}
+async function openStaff(id, u) {
+  const isAdmin = S.user.role === 'super_admin';
+  const cfg = await api('/api/config');
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="modal" style="max-width:460px"><header><h3>${esc(u.name)}</h3><button class="x">${icon('x')}</button></header>
+    <div class="body">
+      <div class="kv"><div class="k">Login</div><div>${esc(u.login)}</div><div class="k">Role</div><div>${esc(roleLabel(u.role))}</div><div class="k">Workload</div><div>${u.assigned} open · ${u.resolved} resolved</div><div class="k">Hours</div><div>${esc(u.hours || '·')}</div><div class="k">Status</div><div>${u.onLeave ? '<span class="pill leave">on leave</span>' : '<span class="pill">active</span>'}</div></div>
+      ${isAdmin ? `
+      <div class="section-title">Manage</div>
+      <label>Team</label><select id="stTeam">${cfg.teams.map((t) => `<option value="${t.id}" ${u.teamId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>
+      <label>Working hours</label><input id="stHours" value="${esc(u.hours || '')}" placeholder="09:00-18:00" />
+      <div class="form-actions">
+        <button class="btn sm" id="stSave">Save</button>
+        <button class="btn ghost sm" id="stLeave">${u.onLeave ? 'Mark active' : 'Mark on leave'}</button>
+        <button class="btn ghost sm" id="stPwd">Reset password</button>
+      </div>` : ''}
+    </div></div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('.x').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  if (isAdmin) {
+    overlay.querySelector('#stSave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { teamId: overlay.querySelector('#stTeam').value, hours: overlay.querySelector('#stHours').value } }); overlay.remove(); toast('Saved'); viewStaff(); });
+    overlay.querySelector('#stLeave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { onLeave: !u.onLeave } }); overlay.remove(); toast(u.onLeave ? 'Marked active' : 'Marked on leave'); viewStaff(); });
+    overlay.querySelector('#stPwd').addEventListener('click', async () => { const pw = prompt('New password for ' + u.name + ' (min 4 chars)'); if (!pw) return; try { await api('/api/staff/' + id + '/reset-password', { method: 'POST', body: { password: pw } }); toast('Password reset to: ' + pw); } catch (e) { toast(e.message); } });
+  }
 }
 
 /* ---------------- utils ---------------- */

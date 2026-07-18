@@ -70,6 +70,17 @@ export function createCloudApiAdapter(wa) {
       return postMessage({ to, type: 'text', text: { body: reply.body } });
     },
 
+    // Send a PDF (or any document) — uploads to Meta media first, then sends by media id.
+    async sendDocument(waPhone, { buffer, filename, caption }) {
+      const form = new FormData();
+      form.append('messaging_product', 'whatsapp');
+      form.append('file', new Blob([buffer], { type: 'application/pdf' }), filename);
+      const up = await fetch(`${base}/media`, { method: 'POST', headers: authHeaders, body: form });
+      if (!up.ok) throw new Error(`media upload failed (${up.status}): ${await up.text()}`);
+      const { id } = await up.json();
+      return postMessage({ to: String(waPhone).replace(/[^0-9]/g, ''), type: 'document', document: { id, filename, caption } });
+    },
+
     // Download an inbound media object (e.g. a complaint photo) so it can be stored off WhatsApp.
     async downloadMedia(mediaId) {
       const metaRes = await fetch(`https://graph.facebook.com/${wa.apiVersion}/${mediaId}`, {

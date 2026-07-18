@@ -18,6 +18,8 @@ export function createMemoryStore(seed = defaultSeed()) {
 
   const sessions = new Map();
   const patients = new Map();
+  const patientRecords = []; // { waPhone, kind, note, author, at } — log-book entries
+  const shifts = []; // { userId, date, startTime, endTime, weeklyLeaveDay, at } — daily staff check-in
   const users = new Map();
   const cases = new Map();
   const events = [];
@@ -56,6 +58,24 @@ export function createMemoryStore(seed = defaultSeed()) {
     async getPatient(waPhone) {
       return patients.get(waPhone) || null;
     },
+    async listPatients() {
+      return [...patients.values()];
+    },
+    async updatePatient(waPhone, patch) {
+      const p = patients.get(waPhone);
+      if (!p) return null;
+      const updated = { ...p, ...patch };
+      patients.set(waPhone, updated);
+      return updated;
+    },
+    async addPatientRecord(waPhone, record) {
+      const row = { id: nextId('rec'), waPhone, at: Date.now(), ...record };
+      patientRecords.push(row);
+      return row;
+    },
+    async listPatientRecords(waPhone) {
+      return patientRecords.filter((r) => r.waPhone === waPhone);
+    },
 
     // ---- staff users ----
     async addUser(user) {
@@ -66,11 +86,31 @@ export function createMemoryStore(seed = defaultSeed()) {
     async getUser(id) {
       return users.get(id) || null;
     },
+    async updateUser(id, patch) {
+      const u = users.get(id);
+      if (!u) return null;
+      const updated = { ...u, ...patch };
+      users.set(id, updated);
+      return updated;
+    },
     async getUserByLogin(login) {
       return [...users.values()].find((u) => u.login.toLowerCase() === String(login).toLowerCase()) || null;
     },
     async listUsers() {
       return [...users.values()];
+    },
+    async getShift(userId, date) {
+      return shifts.find((s) => s.userId === userId && s.date === date) || null;
+    },
+    async addShift(shift) {
+      const idx = shifts.findIndex((s) => s.userId === shift.userId && s.date === shift.date);
+      const row = { id: nextId('shift'), at: Date.now(), ...shift };
+      if (idx >= 0) shifts[idx] = row;
+      else shifts.push(row);
+      return row;
+    },
+    async listShifts(userId) {
+      return shifts.filter((s) => s.userId === userId);
     },
 
     // ---- config ----
@@ -103,6 +143,43 @@ export function createMemoryStore(seed = defaultSeed()) {
     },
     async getSlot(id) {
       return slots.get(id) || null;
+    },
+    async listSlotsByDoctor(doctorId) {
+      return [...slots.values()].filter((s) => s.doctorId === doctorId);
+    },
+    // ---- doctor + slot management ----
+    async addDoctor(doc) {
+      const id = doc.id || nextId('doc');
+      const row = { id, active: true, ...doc };
+      doctors.set(id, row);
+      return row;
+    },
+    async updateDoctor(id, patch) {
+      const d = doctors.get(id);
+      if (!d) return null;
+      const updated = { ...d, ...patch };
+      doctors.set(id, updated);
+      return updated;
+    },
+    async addSlot(slot) {
+      const id = slot.id || nextId('slot');
+      const row = { id, capacity: 1, bookedCount: 0, status: 'open', ...slot };
+      slots.set(id, row);
+      return row;
+    },
+    async updateSlot(id, patch) {
+      const s = slots.get(id);
+      if (!s) return null;
+      const updated = { ...s, ...patch };
+      slots.set(id, updated);
+      return updated;
+    },
+    async deleteSlot(id) {
+      const s = slots.get(id);
+      if (!s) return { ok: false, reason: 'not found' };
+      if (s.bookedCount > 0) return { ok: false, reason: 'has bookings' };
+      slots.delete(id);
+      return { ok: true };
     },
 
     // ---- cases ----

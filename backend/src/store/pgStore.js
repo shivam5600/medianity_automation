@@ -9,8 +9,8 @@ import { runMigrations } from '../db/migrate.js';
 const numOrNull = (v) => (v == null ? null : Number(v));
 const idOrNull = (v) => (v == null ? null : String(v));
 
-const toPatient = (r) => (r ? { id: r.wa_phone, waPhone: r.wa_phone, name: r.name, lang: r.lang } : null);
-const toUser = (r) => (r ? { id: r.id, name: r.name, login: r.login, role: r.role, teamId: r.team_id, passwordHash: r.password_hash, active: r.active } : null);
+const toPatient = (r) => (r ? { id: r.wa_phone, waPhone: r.wa_phone, name: r.name, lang: r.lang, notes: r.notes } : null);
+const toUser = (r) => (r ? { id: r.id, name: r.name, login: r.login, role: r.role, teamId: r.team_id, passwordHash: r.password_hash, phone: r.phone, hours: r.hours, onLeave: r.on_leave === true, active: r.active } : null);
 const toSession = (r) => (r ? { waPhone: r.wa_phone, journey: r.journey, step: r.step, lang: r.lang, state: r.state || {}, lastActivityAt: numOrNull(r.last_activity_at), expiresAt: numOrNull(r.expires_at) } : null);
 const toTeam = (r) => (r ? { id: r.id, name: r.name } : null);
 const toCategory = (r) => (r ? { id: r.id, en: r.en, hi: r.hi, team: r.team, etaMin: r.eta_min, journeyType: r.journey_type } : null);
@@ -85,19 +85,43 @@ export async function createPgStore(connectionString) {
       const { rows } = await q('SELECT * FROM patients WHERE wa_phone=$1', [waPhone]);
       return toPatient(rows[0]);
     },
+    async listPatients() {
+      const { rows } = await q('SELECT * FROM patients ORDER BY created_at DESC');
+      return rows.map(toPatient);
+    },
+    async updatePatient(waPhone, patch) {
+      const { rows } = await q('UPDATE patients SET notes=COALESCE($2,notes), name=COALESCE($3,name) WHERE wa_phone=$1 RETURNING *', [waPhone, patch.notes ?? null, patch.name ?? null]);
+      return toPatient(rows[0]);
+    },
+    async addPatientRecord(waPhone, record) {
+      const { rows } = await q('INSERT INTO patient_records (wa_phone, kind, note, author, at) VALUES ($1,$2,$3,$4,$5) RETURNING *', [waPhone, record.kind ?? 'note', record.note ?? '', record.author ?? 'staff', Date.now()]);
+      const r = rows[0];
+      return { id: String(r.id), waPhone: r.wa_phone, kind: r.kind, note: r.note, author: r.author, at: numOrNull(r.at) };
+    },
+    async listPatientRecords(waPhone) {
+      const { rows } = await q('SELECT * FROM patient_records WHERE wa_phone=$1 ORDER BY at DESC', [waPhone]);
+      return rows.map((r) => ({ id: String(r.id), waPhone: r.wa_phone, kind: r.kind, note: r.note, author: r.author, at: numOrNull(r.at) }));
+    },
 
     // ---- users ----
     async addUser(user) {
       const id = user.id || `user_${Math.random().toString(36).slice(2, 10)}`;
       const { rows } = await q(
-        `INSERT INTO users (id, name, login, role, team_id, password_hash, active)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-        [id, user.name, user.login, user.role, user.teamId ?? null, user.passwordHash ?? null, user.active ?? true],
+        `INSERT INTO users (id, name, login, role, team_id, password_hash, phone, hours, on_leave, active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+        [id, user.name, user.login, user.role, user.teamId ?? null, user.passwordHash ?? null, user.phone ?? null, user.hours ?? null, user.onLeave ?? false, user.active ?? true],
       );
       return toUser(rows[0]);
     },
     async getUser(id) {
       const { rows } = await q('SELECT * FROM users WHERE id=$1', [id]);
+      return toUser(rows[0]);
+    },
+    async updateUser(id, patch) {
+      const { rows } = await q(
+        'UPDATE users SET name=COALESCE($2,name), team_id=COALESCE($3,team_id), role=COALESCE($4,role), phone=COALESCE($5,phone), hours=COALESCE($6,hours), on_leave=COALESCE($7,on_leave), active=COALESCE($8,active), password_hash=COALESCE($9,password_hash) WHERE id=$1 RETURNING *',
+        [id, patch.name ?? null, patch.teamId ?? null, patch.role ?? null, patch.phone ?? null, patch.hours ?? null, patch.onLeave ?? null, patch.active ?? null, patch.passwordHash ?? null],
+      );
       return toUser(rows[0]);
     },
     async getUserByLogin(login) {
@@ -107,6 +131,24 @@ export async function createPgStore(connectionString) {
     async listUsers() {
       const { rows } = await q('SELECT * FROM users');
       return rows.map(toUser);
+    },
+    async getShift(userId, date) {
+      const { rows } = await q('SELECT * FROM shifts WHERE user_id=$1 AND date=$2', [userId, date]);
+      const r = rows[0];
+      return r ? { id: String(r.id), userId: r.user_id, date: r.date, startTime: r.start_time, endTime: r.end_time, weeklyLeaveDay: r.weekly_leave_day, at: numOrNull(r.at) } : null;
+    },
+    async addShift(shift) {
+      const { rows } = await q(
+        `INSERT INTO shifts (user_id,date,start_time,end_time,weekly_leave_day,at) VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (user_id,date) DO UPDATE SET start_time=$3,end_time=$4,weekly_leave_day=$5,at=$6 RETURNING *`,
+        [shift.userId, shift.date, shift.startTime, shift.endTime, shift.weeklyLeaveDay, Date.now()],
+      );
+      const r = rows[0];
+      return { id: String(r.id), userId: r.user_id, date: r.date, startTime: r.start_time, endTime: r.end_time, weeklyLeaveDay: r.weekly_leave_day, at: numOrNull(r.at) };
+    },
+    async listShifts(userId) {
+      const { rows } = await q('SELECT * FROM shifts WHERE user_id=$1 ORDER BY date DESC', [userId]);
+      return rows.map((r) => ({ id: String(r.id), userId: r.user_id, date: r.date, startTime: r.start_time, endTime: r.end_time, weeklyLeaveDay: r.weekly_leave_day, at: numOrNull(r.at) }));
     },
 
     // ---- config ----
@@ -149,6 +191,35 @@ export async function createPgStore(connectionString) {
     async getSlot(id) {
       const { rows } = await q('SELECT * FROM slots WHERE id=$1', [id]);
       return toSlot(rows[0]);
+    },
+    async listSlotsByDoctor(doctorId) {
+      const { rows } = await q('SELECT * FROM slots WHERE doctor_id=$1 ORDER BY start_at', [doctorId]);
+      return rows.map(toSlot);
+    },
+    async addDoctor(doc) {
+      const id = doc.id || `doc_${Math.random().toString(36).slice(2, 9)}`;
+      const { rows } = await q('INSERT INTO doctors (id,name,department,active) VALUES ($1,$2,$3,true) ON CONFLICT (id) DO UPDATE SET name=$2, department=$3 RETURNING *', [id, doc.name, doc.department]);
+      return toDoctor(rows[0]);
+    },
+    async updateDoctor(id, patch) {
+      const { rows } = await q('UPDATE doctors SET name=COALESCE($2,name), department=COALESCE($3,department), active=COALESCE($4,active) WHERE id=$1 RETURNING *', [id, patch.name ?? null, patch.department ?? null, patch.active ?? null]);
+      return toDoctor(rows[0]);
+    },
+    async addSlot(slot) {
+      const id = slot.id || `slot_${Math.random().toString(36).slice(2, 9)}`;
+      const { rows } = await q("INSERT INTO slots (id,doctor_id,label,start_at,capacity,booked_count,status) VALUES ($1,$2,$3,$4,$5,0,'open') RETURNING *", [id, slot.doctorId, slot.label, slot.startAt ?? null, slot.capacity ?? 1]);
+      return toSlot(rows[0]);
+    },
+    async updateSlot(id, patch) {
+      const { rows } = await q('UPDATE slots SET label=COALESCE($2,label), capacity=COALESCE($3,capacity), status=COALESCE($4,status) WHERE id=$1 RETURNING *', [id, patch.label ?? null, patch.capacity ?? null, patch.status ?? null]);
+      return toSlot(rows[0]);
+    },
+    async deleteSlot(id) {
+      const { rows } = await q('SELECT booked_count FROM slots WHERE id=$1', [id]);
+      if (!rows[0]) return { ok: false, reason: 'not found' };
+      if (rows[0].booked_count > 0) return { ok: false, reason: 'has bookings' };
+      await q('DELETE FROM slots WHERE id=$1', [id]);
+      return { ok: true };
     },
 
     // ---- cases ----

@@ -1,8 +1,9 @@
 // Admin JSON API. Returns { status, json }. Auth is a Bearer token except for /api/login.
 // RBAC: super_admin sees everything; other roles see only their team's cases. (async: store I/O)
 
-import { signToken, verifyToken, verifyPassword } from './auth.js';
+import { signToken, verifyToken, verifyPassword, hashPassword } from './auth.js';
 import { computeMetrics } from './metrics.js';
+import { appointmentPdf } from '../services/pdf.js';
 import { setStatus, isSlaBreached, isOpen } from '../services/cases.js';
 import { adminSendUpdate, sendAgentMessage, notifyPatient } from '../services/messaging.js';
 import { confirmBooking, cancelBooking, rescheduleBooking, markVisited, markNoShow } from '../services/booking.js';
@@ -104,15 +105,13 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
     const b = await store.getBooking(seg[2]);
     if (!b) return { status: 404, json: { error: 'not found' } };
     await confirmBooking(store, b.id);
-    if (body?.notify && b.caseId) {
-      const doctor = await store.getDoctor(b.doctorId);
-      const slot = await store.getSlot(b.slotId);
-      await adminSendUpdate(store, adapter, {
-        caseId: b.caseId,
-        key: 'booking_confirmed',
-        actor: user.name,
-        extraVars: { doctor: doctor?.name || '', slot: slot?.label || '' },
-      });
+    if (b.caseId) {
+      if (body?.notify) {
+        const doctor = await store.getDoctor(b.doctorId);
+        const slot = await store.getSlot(b.slotId);
+        await adminSendUpdate(store, adapter, { caseId: b.caseId, key: 'booking_confirmed', actor: user.name, extraVars: { doctor: doctor?.name || '', slot: slot?.label || '' } });
+      }
+      await makeConfirmationPdf(store, adapter, await store.getBooking(b.id), body?.notify); // legit PDF confirmation
     }
     return { status: 200, json: await enrichBooking(store, await store.getBooking(b.id)) };
   }
@@ -131,6 +130,8 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
     if (!b) return { status: 404, json: { error: 'not found' } };
     const out = await enrichBooking(store, b);
     out.events = b.caseId ? await store.listCaseEvents(b.caseId) : [];
+    const atts = b.caseId ? await store.listAttachments(b.caseId) : [];
+    out.pdfUrl = atts.filter((a) => a.kind === 'pdf').map((a) => a.url).pop() || null;
     return { status: 200, json: out };
   }
 
@@ -185,7 +186,163 @@ export async function apiRouter(deps, { method, path, query, body, headers }) {
     return { status: 200, text: casesToCsv(rows), contentType: 'text/csv' };
   }
 
+  // ---- patients (log book) ----
+  if (path === '/api/patients' && method === 'GET') {
+    const [pts, cases, bookings] = await Promise.all([store.listPatients(), store.listCases(), store.listBookings()]);
+    const byBooking = Object.fromEntries(cases.filter((c) => c.bookingId).map((c) => [c.bookingId, c.waPhone]));
+    const rows = pts
+      .map((p) => {
+        const pc = cases.filter((c) => c.waPhone === p.waPhone);
+        const visits = bookings.filter((b) => byBooking[b.id] === p.waPhone && b.status === 'visited').length;
+        const lastAt = pc.length ? Math.max(...pc.map((c) => c.createdAt)) : null;
+        return { waPhone: p.waPhone, name: p.name || '·', lang: p.lang, tickets: pc.length, visits, lastAt };
+      })
+      .sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+    return { status: 200, json: rows };
+  }
+  if (seg[1] === 'patients' && seg.length === 3 && method === 'GET') {
+    const waPhone = decodeURIComponent(seg[2]);
+    const p = await store.getPatient(waPhone);
+    if (!p) return { status: 404, json: { error: 'not found' } };
+    const [allCases, allBookings, records] = await Promise.all([store.listCases(), store.listBookings(), store.listPatientRecords(waPhone)]);
+    const cases = await Promise.all(allCases.filter((c) => c.waPhone === waPhone).sort((a, b) => b.createdAt - a.createdAt).map((c) => enrich(store, c, false)));
+    const bookings = await Promise.all(allBookings.filter((b) => cases.some((c) => c.bookingId === b.id)).map((b) => enrichBooking(store, b)));
+    return { status: 200, json: { patient: { waPhone: p.waPhone, name: p.name, lang: p.lang, notes: p.notes || '' }, cases, bookings, records } };
+  }
+  if (seg[1] === 'patients' && seg[3] === 'records' && method === 'POST') {
+    if (!body?.note) return { status: 400, json: { error: 'note required' } };
+    const rec = await store.addPatientRecord(decodeURIComponent(seg[2]), { kind: body.kind || 'note', note: body.note, author: user.name });
+    return { status: 200, json: rec };
+  }
+  if (seg[1] === 'patients' && seg.length === 3 && method === 'PATCH') {
+    return { status: 200, json: await store.updatePatient(decodeURIComponent(seg[2]), { notes: body?.notes }) };
+  }
+
+  // ---- doctors + slots ----
+  if (path === '/api/doctors' && method === 'GET') {
+    const docs = await store.listDoctors();
+    const out = await Promise.all(docs.map(async (d) => {
+      const sl = await store.listSlotsByDoctor(d.id);
+      return { ...d, openSlots: sl.filter((s) => s.status === 'open').length, totalSlots: sl.length };
+    }));
+    return { status: 200, json: out };
+  }
+  if (path === '/api/doctors' && method === 'POST') {
+    if (!body?.name || !body?.department) return { status: 400, json: { error: 'name and department required' } };
+    return { status: 200, json: await store.addDoctor({ name: body.name, department: body.department }) };
+  }
+  if (seg[1] === 'doctors' && seg.length === 3 && method === 'PATCH') {
+    return { status: 200, json: await store.updateDoctor(seg[2], { name: body?.name, department: body?.department, active: body?.active }) };
+  }
+  if (seg[1] === 'doctors' && seg[3] === 'slots' && method === 'GET') {
+    return { status: 200, json: await store.listSlotsByDoctor(seg[2]) };
+  }
+  if (seg[1] === 'doctors' && seg[3] === 'slots' && method === 'POST') {
+    if (!body?.label) return { status: 400, json: { error: 'label required' } };
+    return { status: 200, json: await store.addSlot({ doctorId: seg[2], label: body.label, startAt: body.startAt || null, capacity: Number(body.capacity) || 1 }) };
+  }
+  if (seg[1] === 'slots' && seg.length === 3 && method === 'DELETE') {
+    const r = await store.deleteSlot(seg[2]);
+    return { status: r.ok ? 200 : 409, json: r.ok ? { ok: true } : { error: r.reason } };
+  }
+  if (seg[1] === 'slots' && seg.length === 3 && method === 'PATCH') {
+    return { status: 200, json: await store.updateSlot(seg[2], { label: body?.label, capacity: body?.capacity, status: body?.status }) };
+  }
+
+  // ---- staff (team directory) ----
+  if (path === '/api/staff' && method === 'GET') {
+    const [staff, cases, teams] = await Promise.all([store.listUsers(), store.listCases(), store.listTeams()]);
+    const teamName = Object.fromEntries(teams.map((t) => [t.id, t.name]));
+    return { status: 200, json: staff.map((u) => {
+      const mine = cases.filter((c) => c.assigneeId === u.id);
+      return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId, teamName: u.teamId ? teamName[u.teamId] : '·', phone: u.phone || '', hours: u.hours || '', onLeave: !!u.onLeave, active: u.active !== false, assigned: mine.filter((c) => isOpen(c)).length, resolved: mine.filter((c) => c.status === 'resolved' || c.status === 'closed').length };
+    }) };
+  }
+  if (path === '/api/staff' && method === 'POST') {
+    if (user.role !== 'super_admin') return { status: 403, json: { error: 'only a super admin can add staff' } };
+    if (!body?.name || !body?.login || !body?.password) return { status: 400, json: { error: 'name, login and password required' } };
+    if (await store.getUserByLogin(body.login)) return { status: 409, json: { error: 'that login already exists' } };
+    const u = await store.addUser({ name: body.name, login: body.login, role: body.role || 'agent', teamId: body.teamId || null, phone: body.phone || null, hours: body.hours || null, passwordHash: hashPassword(body.password) });
+    return { status: 200, json: publicUserFull(u) };
+  }
+  if (seg[1] === 'staff' && seg.length === 3 && method === 'PATCH') {
+    if (user.role !== 'super_admin' && user.id !== seg[2]) return { status: 403, json: { error: 'forbidden' } };
+    const u = await store.updateUser(seg[2], { name: body?.name, teamId: body?.teamId, role: body?.role, phone: body?.phone, hours: body?.hours, onLeave: body?.onLeave, active: body?.active });
+    return { status: 200, json: u ? publicUserFull(u) : null };
+  }
+
+  // ---- feedback ----
+  if (path === '/api/feedback' && method === 'GET') {
+    const cases = await store.listCases();
+    const rated = cases.filter((c) => c.rating != null);
+    const items = await Promise.all(rated.slice().sort((a, b) => (b.resolvedAt || b.createdAt) - (a.resolvedAt || a.createdAt)).map((c) => enrich(store, c, false)));
+    const distribution = {};
+    for (let i = 1; i <= 10; i++) distribution[i] = 0;
+    rated.forEach((c) => { if (distribution[c.rating] != null) distribution[c.rating]++; });
+    const avg = rated.length ? Number((rated.reduce((a, c) => a + c.rating, 0) / rated.length).toFixed(1)) : null;
+    return { status: 200, json: { items, avg, count: rated.length, distribution } };
+  }
+
+  // ---- alerts (current, not range-scoped) ----
+  if (path === '/api/alerts' && method === 'GET') {
+    const m = await computeMetrics(store, {});
+    return { status: 200, json: m.alerts };
+  }
+
+  // ---- staff daily check-in (IST date) ----
+  if (path === '/api/me/shift' && method === 'GET') {
+    const date = istToday();
+    const shift = await store.getShift(user.id, date);
+    return { status: 200, json: { date, shift, needsCheckin: !shift && user.role !== 'super_admin' } };
+  }
+  if (path === '/api/me/shift' && method === 'POST') {
+    const date = istToday();
+    const shift = await store.addShift({ userId: user.id, date, startTime: body?.startTime || '', endTime: body?.endTime || '', weeklyLeaveDay: body?.weeklyLeaveDay || '' });
+    return { status: 200, json: shift };
+  }
+  if (seg[1] === 'staff' && seg[3] === 'reset-password' && method === 'POST') {
+    if (user.role !== 'super_admin') return { status: 403, json: { error: 'only a super admin can reset passwords' } };
+    if (!body?.password || String(body.password).length < 4) return { status: 400, json: { error: 'password must be at least 4 characters' } };
+    const target = await store.getUser(seg[2]);
+    if (!target) return { status: 404, json: { error: 'not found' } };
+    await store.updateUser(seg[2], { passwordHash: hashPassword(body.password) });
+    return { status: 200, json: { ok: true } };
+  }
+
   return { status: 404, json: { error: 'no such route' } };
+}
+
+function istToday() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+}
+
+function publicUserFull(u) {
+  return { id: u.id, name: u.name, login: u.login, role: u.role, teamId: u.teamId, phone: u.phone, hours: u.hours, onLeave: u.onLeave, active: u.active };
+}
+
+async function makeConfirmationPdf(store, adapter, b, notify) {
+  const c = b.caseId ? await store.getCase(b.caseId) : null;
+  const patient = c ? await store.getPatient(c.waPhone) : null;
+  const doctor = await store.getDoctor(b.doctorId);
+  const slot = await store.getSlot(b.slotId);
+  const buf = appointmentPdf({
+    address: 'CP-221, Hahnemann Medinity Hospital Road, Gomti Nagar, Lucknow 226010',
+    patient: patient?.name || '-',
+    doctor: doctor?.name || '-',
+    department: doctor?.department || '-',
+    slot: slot?.label || '-',
+    ticketNo: c?.humanNo || '-',
+  });
+  const dataUrl = 'data:application/pdf;base64,' + buf.toString('base64');
+  if (b.caseId) await store.addAttachment(b.caseId, { url: dataUrl, kind: 'pdf', waMediaId: null });
+  if (notify && c && typeof adapter.sendDocument === 'function') {
+    try {
+      await adapter.sendDocument(c.waPhone, { buffer: buf, filename: `appointment-${String(c.humanNo).replace('#', '')}.pdf`, caption: 'Your appointment confirmation' });
+    } catch (e) {
+      /* document send is best-effort */
+    }
+  }
+  return dataUrl;
 }
 
 async function markAwaitingFeedback(store, c) {

@@ -21,8 +21,16 @@ export async function seedDemo(store) {
 
   const p1 = await P('+919990000001', 'Ramesh Kumar');
   const { case: c1 } = await createComplaintCase(store, { patient: p1, categoryId: 'cleanliness', roomBed: '204', description: 'Bed sheet is dirty' });
-  // a sample attached photo (tiny data URL) to demonstrate image display in the panel
-  await store.addAttachment(c1.id, { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', waMediaId: 'demo', kind: 'image' });
+  // a sample attached photo (illustrative SVG) to demonstrate image display in the panel
+  const bedSvg =
+    "<svg xmlns='http://www.w3.org/2000/svg' width='320' height='200' viewBox='0 0 320 200'>" +
+    "<rect width='320' height='200' fill='#eef1f4'/><rect y='150' width='320' height='50' fill='#dde3e8'/>" +
+    "<rect x='36' y='92' width='248' height='58' rx='6' fill='#c6d0d8'/><rect x='36' y='68' width='78' height='44' rx='7' fill='#b4bfc9'/>" +
+    "<rect x='46' y='100' width='230' height='30' fill='#e7ddce'/>" +
+    "<ellipse cx='150' cy='116' rx='13' ry='8' fill='#b0925f' opacity='.55'/><ellipse cx='205' cy='121' rx='9' ry='6' fill='#977c50' opacity='.55'/><ellipse cx='120' cy='122' rx='7' ry='4' fill='#9c8154' opacity='.5'/>" +
+    "<text x='160' y='186' font-family='sans-serif' font-size='12' fill='#6a7885' text-anchor='middle'>Bed 204 - reported unclean</text></svg>";
+  const bedUrl = 'data:image/svg+xml;base64,' + Buffer.from(bedSvg).toString('base64');
+  await store.addAttachment(c1.id, { url: bedUrl, waMediaId: 'demo', kind: 'image' });
 
   const p2 = await P('+919990000002', 'Sunita Devi', 'hi');
   const { case: c2 } = await createComplaintCase(store, { patient: p2, categoryId: 'ac_electrical', roomBed: '310', description: 'AC not cooling' });

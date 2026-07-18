@@ -91,7 +91,37 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--brand) 3
 .shell { display: flex; min-height: 100vh; }
 .sidebar { width: 232px; flex: none; background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 18px 14px; position: sticky; top: 0; height: 100vh; }
 .sidebar .brand { padding: 4px 8px 20px; }
-.nav { display: flex; flex-direction: column; gap: 3px; }
+.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav-group { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding: 12px 12px 5px; font-weight: 600; opacity: 0.8; }
+.nav-group:first-child { padding-top: 2px; }
+/* grouped KPI cards */
+.kpi-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-bottom: 18px; }
+.kpi-group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 15px 16px; }
+.kpi-group > h4 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+.kpi-group > h4 .icon { color: var(--brand); }
+.stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 10px; }
+.stat { padding: 8px 10px; border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.stat.click { cursor: pointer; transition: background 0.12s; }
+.stat.click:hover { background: color-mix(in srgb, var(--brand) 10%, var(--surface-2)); }
+.stat .n { font-size: 20px; font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
+.stat .l { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.stat.alert .n { color: var(--c-red); }
+.stat.warn .n { color: var(--c-amber); }
+/* generic list rows */
+.list-row { display: grid; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.list-row:last-child { border-bottom: 0; }
+.list-row:hover { background: var(--surface-2); }
+.list-row .primary { font-weight: 600; font-size: 13.5px; }
+.list-row .secondary { color: var(--muted); font-size: 12px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; background: var(--surface-2); color: var(--ink-2); }
+.pill.leave { background: color-mix(in srgb, var(--c-amber) 16%, transparent); color: var(--c-amber); }
+.pill.off { background: color-mix(in srgb, var(--c-slate) 16%, transparent); color: var(--c-slate); }
+.dist { display: flex; align-items: flex-end; gap: 5px; height: 90px; margin-top: 6px; }
+.dist .b { flex: 1; background: var(--brand); border-radius: 4px 4px 0 0; min-height: 3px; position: relative; }
+.dist .b span { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--muted); }
+.form-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.slot-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 9px; margin-bottom: 6px; font-size: 13px; }
+.addbar { display: flex; gap: 20px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
 .nav button { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 10px; color: var(--muted); font-weight: 500; text-align: left; width: 100%; transition: background 0.15s, color 0.15s; }
 .nav button:hover { background: var(--surface-2); color: var(--ink); }
 .nav button.active { background: var(--brand-soft); color: var(--brand-ink); font-weight: 600; }
