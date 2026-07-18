@@ -74,6 +74,79 @@ function toast(msg) {
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 2600);
 }
+
+/* ---------------- in-app modal (NEVER use native prompt/confirm/alert) ----------------
+   uiForm(title, fields[, opts]) -> Promise<values|null>   (fields: {key,label,type,value,placeholder,required,min,options})
+   uiConfirm(title, message[, opts]) -> Promise<boolean>
+   Both are theme-aware, keyboard-driven (Esc = cancel, Enter = submit), backdrop-dismissable,
+   and never overflow. This replaces the browser's ugly "<host> says" dialogs. */
+function mountModal(inner, onEscape) {
+  const back = document.createElement('div');
+  back.className = 'modal-back';
+  back.innerHTML = `<div class="modal-card" role="dialog" aria-modal="true">${inner}</div>`;
+  document.body.appendChild(back);
+  const onKey = (e) => { if (e.key === 'Escape') onEscape(); };
+  document.addEventListener('keydown', onKey);
+  const close = () => { document.removeEventListener('keydown', onKey); back.remove(); };
+  back.addEventListener('mousedown', (e) => { if (e.target === back) onEscape(); });
+  return { back, close };
+}
+function uiForm(title, fields, { confirmText = 'Save', cancelText = 'Cancel', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const rows = fields.map((f, i) => {
+      const id = 'mf_' + i;
+      const lab = `<label for="${id}">${esc(f.label)}</label>`;
+      if (f.type === 'select') return lab + `<select id="${id}">${f.options.map((o) => `<option value="${esc(o.value)}"${o.value === (f.value ?? '') ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</select>`;
+      const wrap = f.type === 'password'
+        ? `<div class="pwwrap"><input id="${id}" type="password" value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder ?? '')}" autocomplete="off" /><button type="button" class="eye" data-eye="${id}" aria-label="Show password">${icon('eye', 'sm')}</button></div>`
+        : `<input id="${id}" type="${f.type || 'text'}" value="${esc(f.value ?? '')}" placeholder="${esc(f.placeholder ?? '')}" autocomplete="off" />`;
+      return lab + wrap;
+    }).join('');
+    const inner = `<div class="modal-head"><h3>${esc(title)}</h3><button type="button" class="modal-x" data-act="cancel" aria-label="Close">${icon('x', 'sm')}</button></div>
+      <form class="modal-body" novalidate>${rows}<div class="modal-err" id="mferr"></div>
+        <div class="modal-actions"><button type="button" class="btn ghost sm" data-act="cancel">${esc(cancelText)}</button><button type="submit" class="btn sm${danger ? ' danger' : ''}">${esc(confirmText)}</button></div>
+      </form>`;
+    const done = (val) => { m.close(); resolve(val); };
+    const m = mountModal(inner, () => done(null));
+    const { back } = m;
+    back.querySelectorAll('[data-act="cancel"]').forEach((b) => b.addEventListener('click', () => done(null)));
+    back.querySelectorAll('[data-eye]').forEach((b) => b.addEventListener('click', () => {
+      const inp = back.querySelector('#' + b.dataset.eye);
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      b.innerHTML = icon(show ? 'eyeOff' : 'eye', 'sm');
+    }));
+    const errEl = back.querySelector('#mferr');
+    back.querySelector('form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const out = {};
+      for (let i = 0; i < fields.length; i++) {
+        const f = fields[i];
+        const val = String(back.querySelector('#mf_' + i).value).trim();
+        if (f.required && !val) { errEl.textContent = f.label + ' is required.'; back.querySelector('#mf_' + i).focus(); return; }
+        if (f.min && val.length < f.min) { errEl.textContent = f.label + ' must be at least ' + f.min + ' characters.'; back.querySelector('#mf_' + i).focus(); return; }
+        out[f.key] = val;
+      }
+      done(out);
+    });
+    const first = back.querySelector('#mf_0'); if (first) first.focus();
+  });
+}
+function uiConfirm(title, message, { confirmText = 'Confirm', cancelText = 'Cancel', danger = false } = {}) {
+  return new Promise((resolve) => {
+    const inner = `<div class="modal-head"><h3>${esc(title)}</h3><button type="button" class="modal-x" data-act="cancel" aria-label="Close">${icon('x', 'sm')}</button></div>
+      <div class="modal-body"><p class="modal-msg">${esc(message)}</p>
+        <div class="modal-actions"><button type="button" class="btn ghost sm" data-act="cancel">${esc(cancelText)}</button><button type="button" class="btn sm${danger ? ' danger' : ''}" data-act="ok">${esc(confirmText)}</button></div>
+      </div>`;
+    const done = (val) => { m.close(); resolve(val); };
+    const m = mountModal(inner, () => done(false));
+    const { back } = m;
+    back.querySelectorAll('[data-act="cancel"]').forEach((b) => b.addEventListener('click', () => done(false)));
+    const ok = back.querySelector('[data-act="ok"]');
+    ok.addEventListener('click', () => done(true));
+    ok.focus();
+  });
+}
 function logout() {
   stopPoll();
   S.token = null; S.user = null; S.metrics = null; S.detail = null;
@@ -782,11 +855,12 @@ async function viewDoctors() {
   el.querySelectorAll('[data-d]').forEach((e) => e.addEventListener('click', () => goDetail('doctor', e.dataset.d)));
 }
 async function addDoctor() {
-  const name = prompt('Doctor name'); if (!name) return;
-  const department = prompt('Department'); if (!department) return;
-  await api('/api/doctors', { method: 'POST', body: { name, department } });
-  toast('Doctor added');
-  viewDoctors();
+  const v = await uiForm('Add doctor', [
+    { key: 'name', label: 'Doctor name', required: true, placeholder: 'Dr. Asha Verma' },
+    { key: 'department', label: 'Department', required: true, placeholder: 'Cardiology' },
+  ], { confirmText: 'Add doctor' });
+  if (!v) return;
+  try { await api('/api/doctors', { method: 'POST', body: { name: v.name, department: v.department } }); toast('Doctor added'); viewDoctors(); } catch (e) { toast(e.message); }
 }
 const slotShell = () => `
     <div class="main"><div class="detail-grid">
@@ -886,12 +960,15 @@ async function viewStaff() {
   document.querySelectorAll('#stMain [data-s]').forEach((e) => e.addEventListener('click', () => goDetail('staff', e.dataset.s)));
 }
 async function addStaff() {
-  const name = prompt('Staff name'); if (!name) return;
-  const login = prompt('Login email'); if (!login) return;
-  const password = prompt('Temporary password (min 4 chars)'); if (!password) return;
   const cfg = await api('/api/config');
-  const teamId = prompt('Team (' + cfg.teams.map((t) => t.id).join(', ') + ')', 'front_desk');
-  try { await api('/api/staff', { method: 'POST', body: { name, login, password, role: 'agent', teamId } }); toast('Staff added · password: ' + password); viewStaff(); } catch (e) { toast(e.message); }
+  const v = await uiForm('Add staff member', [
+    { key: 'name', label: 'Full name', required: true, placeholder: 'Ravi Kumar' },
+    { key: 'login', label: 'Login email', required: true, placeholder: 'ravi@medinity.local' },
+    { key: 'password', label: 'Temporary password', type: 'password', required: true, min: 4, placeholder: 'min 4 characters' },
+    { key: 'teamId', label: 'Team', type: 'select', value: 'front_desk', options: cfg.teams.map((t) => ({ value: t.id, label: t.name })) },
+  ], { confirmText: 'Add staff' });
+  if (!v) return;
+  try { await api('/api/staff', { method: 'POST', body: { name: v.name, login: v.login, password: v.password, role: 'agent', teamId: v.teamId } }); toast('Staff added · password: ' + v.password); viewStaff(); } catch (e) { toast(e.message); }
 }
 async function staffDetail(id) {
   const [rows, cfg] = await Promise.all([api('/api/staff'), api('/api/config')]);
@@ -923,9 +1000,23 @@ async function staffDetail(id) {
   if (admin) {
     page().querySelector('#stSave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { teamId: page().querySelector('#stTeam').value, hours: page().querySelector('#stHours').value } }); toast('Saved'); staffDetail(id); });
     page().querySelector('#stLeave').addEventListener('click', async () => { await api('/api/staff/' + id, { method: 'PATCH', body: { onLeave: !u.onLeave } }); toast(u.onLeave ? 'Marked active' : 'Marked on leave'); staffDetail(id); });
-    page().querySelector('#stPwd').addEventListener('click', async () => { const pw = prompt('New password for ' + u.name + ' (min 4 chars)'); if (!pw) return; try { await api('/api/staff/' + id + '/reset-password', { method: 'POST', body: { password: pw } }); toast('Password changed to: ' + pw); } catch (e) { toast(e.message); } });
+    page().querySelector('#stPwd').addEventListener('click', async () => {
+      const v = await uiForm('Change password · ' + u.name, [
+        { key: 'pw', label: 'New password', type: 'password', required: true, min: 4, placeholder: 'min 4 characters' },
+      ], { confirmText: 'Change password' });
+      if (!v) return;
+      try { await api('/api/staff/' + id + '/reset-password', { method: 'POST', body: { password: v.pw } }); toast('Password changed to: ' + v.pw); } catch (e) { toast(e.message); }
+    });
     const lockBtn = page().querySelector('#stLock');
-    if (lockBtn) lockBtn.addEventListener('click', async () => { try { await api('/api/staff/' + id, { method: 'PATCH', body: { active: u.active === false } }); toast(u.active === false ? 'Account unlocked' : 'Account locked'); staffDetail(id); } catch (e) { toast(e.message); } });
+    if (lockBtn) lockBtn.addEventListener('click', async () => {
+      const locking = u.active !== false;
+      const ok = await uiConfirm(
+        locking ? 'Lock ' + u.name + '?' : 'Unlock ' + u.name + '?',
+        locking ? 'They will be signed out and blocked from logging in until you unlock the account.' : 'They will be able to log in again.',
+        { confirmText: locking ? 'Lock account' : 'Unlock account', danger: locking });
+      if (!ok) return;
+      try { await api('/api/staff/' + id, { method: 'PATCH', body: { active: !locking } }); toast(locking ? 'Account locked' : 'Account unlocked'); staffDetail(id); } catch (e) { toast(e.message); }
+    });
   }
 }
 
